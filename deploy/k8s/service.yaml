@@ -1,0 +1,53 @@
+# The service itself — stateless, scale to taste. Holds the master encryption
+# key (via Secret) and does auth + token lookup + MCP in-process (Model A).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastmail-mcp-service
+  namespace: fastmail-mcp
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: fastmail-mcp-service }
+  template:
+    metadata:
+      labels: { app: fastmail-mcp-service }
+    spec:
+      containers:
+        - name: service
+          image: ghcr.io/radiosilence/fastmail-mcp-service:latest
+          env:
+            - name: BIND_ADDR
+              value: "0.0.0.0:8080"
+            - name: PUBLIC_URL
+              value: "https://mail.radiosilence.dev"
+            - name: HYDRA_PUBLIC_URL
+              value: "http://hydra-public:4444"
+            - name: HYDRA_ISSUER
+              value: "https://auth.radiosilence.dev"
+            - name: HYDRA_ADMIN_URL
+              value: "http://hydra-admin:4445"
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: fastmail-mcp-secrets, key: database-url } }
+            - name: TOKEN_ENC_KEY
+              valueFrom: { secretKeyRef: { name: fastmail-mcp-secrets, key: token-enc-key } }
+            - name: SESSION_SECRET
+              valueFrom: { secretKeyRef: { name: fastmail-mcp-secrets, key: session-secret } }
+            - name: GITHUB_CLIENT_ID
+              valueFrom: { secretKeyRef: { name: fastmail-mcp-secrets, key: github-client-id } }
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: fastmail-mcp-secrets, key: github-client-secret } }
+          ports: [{ containerPort: 8080 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastmail-mcp-service
+  namespace: fastmail-mcp
+spec:
+  selector: { app: fastmail-mcp-service }
+  ports: [{ port: 8080, targetPort: 8080 }]

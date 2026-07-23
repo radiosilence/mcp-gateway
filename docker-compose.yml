@@ -1,0 +1,80 @@
+# Full local end-to-end: Postgres + Ory Hydra (the AS) + this service.
+# Add a custom connector in Claude pointing at http://localhost:8080/mcp and
+# the whole OAuth dance runs locally.
+#
+# Prereq: copy .env.example → .env and fill GITHUB_CLIENT_ID/SECRET (GitHub OAuth
+# app with callback http://localhost:8080/auth/github/callback).
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: fastmail
+      POSTGRES_PASSWORD: fastmail
+      POSTGRES_DB: fastmail_mcp
+    volumes:
+      - ./deploy/local/initdb.sql:/docker-entrypoint-initdb.d/initdb.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fastmail"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: run Hydra's schema migrations before it serves.
+  hydra-migrate:
+    image: oryd/hydra:v2.2.0
+    command: migrate sql -e --yes
+    environment:
+      DSN: postgres://fastmail:fastmail@postgres:5432/hydra?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+
+  hydra:
+    image: oryd/hydra:v2.2.0
+    command: serve all --dev
+    environment:
+      DSN: postgres://fastmail:fastmail@postgres:5432/hydra?sslmode=disable
+      # Browser/Claude-facing issuer.
+      URLS_SELF_ISSUER: http://localhost:4444
+      # Login/consent providers live in *this* service (browser-facing URLs).
+      URLS_LOGIN: http://localhost:8080/auth/login
+      URLS_CONSENT: http://localhost:8080/auth/consent
+      SECRETS_SYSTEM: dev-system-secret-change-me-at-least-32-chars
+      # Issue JWT access tokens so the service validates locally via JWKS.
+      STRATEGIES_ACCESS_TOKEN: jwt
+      OAUTH2_EXPOSE_INTERNAL_ERRORS: "true"
+      LOG_LEVEL: info
+    ports:
+      - "4444:4444" # public
+      - "4445:4445" # admin (dev only — never expose in prod)
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+
+  service:
+    build: .
+    env_file: .env
+    environment:
+      BIND_ADDR: 0.0.0.0:8080
+      PUBLIC_URL: http://localhost:8080
+      DATABASE_URL: postgres://fastmail:fastmail@postgres:5432/fastmail_mcp
+      # Service reaches Hydra in-network for JWKS; issuer stays localhost:4444
+      # (what the browser/Claude and the token `iss` use).
+      HYDRA_PUBLIC_URL: http://hydra:4444
+      HYDRA_ISSUER: http://localhost:4444
+      HYDRA_ADMIN_URL: http://hydra:4445
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hydra:
+        condition: service_started
+
+volumes:
+  pgdata:

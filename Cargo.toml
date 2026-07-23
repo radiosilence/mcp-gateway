@@ -1,0 +1,63 @@
+[package]
+name = "fastmail-mcp-service"
+version = "0.1.0"
+edition = "2024"
+description = "Hosted, OAuth-fronted MCP server for Fastmail — multi-tenant wrapper around fastmail-cli"
+repository = "https://github.com/radiosilence/fastmail-mcp-service"
+license = "MIT"
+
+[dependencies]
+# Core Fastmail machinery (JMAP + GraphQL + MCP tools), linked as a library.
+# Pin to the branch until the lib surface lands on a release.
+fastmail-cli = { git = "https://github.com/radiosilence/fastmail-cli", branch = "feat/mcp-per-request-token" }
+rmcp = { version = "1", features = [
+  "server",
+  "transport-streamable-http-server",
+] }
+
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+http = "1"
+
+# Storage
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls-ring",
+  "postgres",
+  "macros",
+  "migrate",
+  "time",
+] }
+
+# Crypto: envelope-encrypt the Fastmail token at rest
+chacha20poly1305 = "0.10"
+rand = "0.8"
+base64 = "0.22"
+
+# Auth: validate Hydra-issued JWTs, sign our own session cookies
+jsonwebtoken = "9"
+
+# HTTP client for JWKS, Hydra admin API, GitHub OAuth
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
+
+# Templating for the dashboard
+askama = "0.12"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+time = "0.3"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fastmail MCP</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📬</text></svg>" />
+</head>
+<body class="h-full bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+  <main class="min-h-full flex items-center justify-center px-4">
+    <div class="w-full max-w-md">
+      <div class="rounded-2xl bg-white dark:bg-slate-900 shadow-xl ring-1 ring-slate-200 dark:ring-slate-800 p-8">
+        <div class="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 text-3xl shadow-lg">
+          📬
+        </div>
+        <h1 class="text-center text-2xl font-semibold tracking-tight">Fastmail MCP</h1>
+        <p class="mt-2 text-center text-sm text-slate-500 dark:text-slate-400">
+          Connect your Fastmail mailbox to Claude. Sign in, drop in your Fastmail
+          API token, and add the connector.
+        </p>
+        <a href="/login"
+           class="mt-8 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 dark:bg-white px-4 py-3 text-sm font-medium text-white dark:text-slate-900 transition hover:opacity-90">
+          <svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
+            <path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.3.8 1 .8 2.1v3.1c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/>
+          </svg>
+          Sign in with GitHub
+        </a>
+      </div>
+      <p class="mt-4 text-center text-xs text-slate-400">
+        Your token is encrypted at rest and only used to talk to Fastmail on your behalf.
+      </p>
+    </div>
+  </main>
+</body>
+</html>

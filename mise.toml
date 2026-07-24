@@ -58,6 +58,6 @@ echo "== protected-resource (service) =="
 curl -fsS "https://$FASTMAIL_HOST/.well-known/oauth-protected-resource" | jq .
 echo "== /mcp (expect 401) =="
 curl -s -o /dev/null -w "%{http_code}\\n" "https://$FASTMAIL_HOST/mcp"
-echo "== authorization-server (hydra) =="
-curl -fsS "https://$AUTH_HOST/.well-known/oauth-authorization-server" | jq '{issuer,registration_endpoint,token_endpoint,jwks_uri}'
+echo "== openid-configuration (hydra) =="
+curl -fsS "https://$AUTH_HOST/.well-known/openid-configuration" | jq '{issuer,registration_endpoint,token_endpoint,jwks_uri}'
 """

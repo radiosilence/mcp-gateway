@@ -108,7 +108,13 @@ These are deliberately stubbed/simplified in this first cut:
 - **Encryption key rotation** is not implemented — rotating `TOKEN_ENC_KEY`
   currently orphans stored tokens (users re-paste). Fine given disposable state,
   but decide intentionally.
-- **Consent is auto-granted** (single-tenant assumption). If you ever allow
-  arbitrary signups, add a real consent screen and lock down who may register.
+- **DCR is public + consent is auto-granted.** Claude requires Dynamic Client
+  Registration (it auto-registers), so DCR must stay enabled — but public DCR +
+  auto-consent means an attacker could register a client and phish a
+  token-holder into authorizing it. **The required control is a login
+  allowlist**: restrict `/auth/login` to known GitHub ids so token issuance
+  needs your identity gate regardless of who registers a client. Add a real
+  consent screen too if you ever go multi-user. Not yet implemented — do this
+  before it's genuinely public.
 - Custodial risk: you hold users' full-mailbox Fastmail tokens. Keep the enc key
   in a real secret store with tight RBAC; never in the image or git.

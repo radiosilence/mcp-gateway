@@ -49,6 +49,10 @@ services:
       # Opaque access tokens (default) — the service introspects them, so no
       # JWT ever reaches a client. Revocable at Hydra.
       OAUTH2_EXPOSE_INTERNAL_ERRORS: "true"
+      # Public Dynamic Client Registration — Claude auto-registers via this.
+      # Without it Hydra omits registration_endpoint from the metadata and the
+      # connector can't register. DCR endpoint: /openid/register.
+      OIDC_DYNAMIC_CLIENT_REGISTRATION_ENABLED: "true"
       LOG_LEVEL: info
     ports:
       - "4444:4444" # public

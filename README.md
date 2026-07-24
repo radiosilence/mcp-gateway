@@ -50,8 +50,29 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Then add `http://localhost:8080/mcp` as a custom connector in Claude. Sign in,
-set your Fastmail token in the dashboard, done.
+You can exercise the whole browser flow (login, set token, test connection) at
+`http://localhost:8080` directly — no HTTPS needed for a local browser.
+
+### Testing the Claude connector (Cloudflare tunnel)
+
+Claude's connector is fetched by Anthropic's servers, not your machine, so
+`localhost` is unreachable — and **both** the service and Hydra must be public
+(Claude talks to each directly). One tunnel, two hostnames does it:
+
+1. In **Cloudflare Zero Trust → Tunnels**, create a tunnel and add two public
+   hostnames pointing at the in-network targets:
+   - `fastmail-dev.<your-domain>` → `http://service:8080`
+   - `auth-dev.<your-domain>` → `http://hydra:4444`
+2. Copy the tunnel token into `.env` as `TUNNEL_TOKEN`, and set:
+   - `PUBLIC_URL=https://fastmail-dev.<your-domain>`
+   - `HYDRA_ISSUER=https://auth-dev.<your-domain>`
+3. Update the GitHub OAuth app's callback to
+   `https://fastmail-dev.<your-domain>/auth/github/callback`.
+4. `docker compose --profile tunnel up`
+5. Add `https://fastmail-dev.<your-domain>/mcp` as a custom connector in Claude.
+
+The service and Hydra stay plain HTTP inside the compose network; Cloudflare
+terminates TLS at the edge (the same role Traefik plays in production).
 
 ## Configuration
 

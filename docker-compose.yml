@@ -39,11 +39,12 @@ services:
     command: serve all --dev
     environment:
       DSN: postgres://fastmail:fastmail@postgres:5432/hydra?sslmode=disable
-      # Browser/Claude-facing issuer.
-      URLS_SELF_ISSUER: http://localhost:4444
+      # Browser/Claude-facing issuer. Defaults to localhost; set HYDRA_ISSUER in
+      # .env to a public tunnel hostname to test the Claude connector.
+      URLS_SELF_ISSUER: ${HYDRA_ISSUER:-http://localhost:4444}
       # Login/consent providers live in *this* service (browser-facing URLs).
-      URLS_LOGIN: http://localhost:8080/auth/login
-      URLS_CONSENT: http://localhost:8080/auth/consent
+      URLS_LOGIN: ${PUBLIC_URL:-http://localhost:8080}/auth/login
+      URLS_CONSENT: ${PUBLIC_URL:-http://localhost:8080}/auth/consent
       SECRETS_SYSTEM: dev-system-secret-change-me-at-least-32-chars
       # Opaque access tokens (default) — the service introspects them, so no
       # JWT ever reaches a client. Revocable at Hydra.
@@ -61,11 +62,13 @@ services:
     env_file: .env
     environment:
       BIND_ADDR: 0.0.0.0:8080
-      PUBLIC_URL: http://localhost:8080
+      # Public URLs default to localhost; override in .env with tunnel hostnames
+      # to test the Claude connector (see "Cloudflare tunnel" in the README).
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
       DATABASE_URL: postgres://fastmail:fastmail@postgres:5432/fastmail_mcp
       # Issuer is what the browser/Claude use to reach Hydra (advertised in
       # metadata); admin is in-network, used for introspection + login/consent.
-      HYDRA_ISSUER: http://localhost:4444
+      HYDRA_ISSUER: ${HYDRA_ISSUER:-http://localhost:4444}
       HYDRA_ADMIN_URL: http://hydra:4445
     ports:
       - "8080:8080"
@@ -74,6 +77,22 @@ services:
         condition: service_healthy
       hydra:
         condition: service_started
+
+  # Opt-in (`docker compose --profile tunnel up`): exposes the service + Hydra
+  # publicly so the Claude connector flow works from Anthropic's servers.
+  # Configure ONE tunnel with TWO public hostnames in the Cloudflare Zero Trust
+  # dashboard, pointing at the in-network targets:
+  #   <fastmail host>  ->  http://service:8080
+  #   <auth host>      ->  http://hydra:4444
+  # then paste the tunnel token into .env as TUNNEL_TOKEN. See README.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:-}
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    depends_on:
+      - service
+      - hydra
 
 volumes:
   pgdata:

@@ -1,7 +1,4 @@
-# mcp-gateway
-
-> Repo is still named `fastmail-mcp-service` (Fastmail was the first backend);
-> the code is now a generic gateway. Rename happens when it folds into jaritanet.
+# jaritanet-mcp-gateway
 
 An OAuth-fronted gateway for self-hosted MCP servers. Add any of your MCPs to
 Claude (Desktop / mobile / web) as custom connectors without each one needing
@@ -19,30 +16,44 @@ every MCP, the gateway centralizes it:
    upstream identity — no passwords stored).
 2. Map that identity to a per-MCP key the user pastes into a dashboard, stored
    encrypted.
-3. Proxy `/mcp/<id>` to that MCP's backend, injecting the key per request.
+3. Proxy `/{id}` to that MCP's backend, injecting the key per request.
 
 The OAuth token proves *who you are*; it is never the MCP's key.
 
-## Architecture (gateway + backends)
+## Architecture
 
+```mermaid
+flowchart LR
+  C["Claude<br/>Desktop · Code · web"]
+
+  subgraph ns["gateway namespace"]
+    G["gateway<br/>axum, N pods"]
+    H["Hydra<br/>OAuth AS"]
+    DB[("Postgres<br/>encrypted creds")]
+    B["backend MCP pod<br/>e.g. fastmail-cli mcp --http"]
+  end
+
+  C -->|"① OAuth: PKCE, DCR"| H
+  H -.->|"login + consent<br/>delegated back"| G
+  C -->|"② Bearer token"| G
+  G -->|"introspect → sub"| H
+  G -->|"lookup enc key"| DB
+  G -->|"③ proxy /{id}, inject<br/>MCP's credential header"| B
 ```
-Claude ──OAuth──► Hydra (AS: DCR via our /register proxy, PKCE, tokens)
-                    ▲ login/consent delegated back to the gateway
-Claude ──Bearer─► gateway (axum, N pods)
-                    ├ introspect opaque bearer at Hydra → sub
-                    ├ dashboard: manage a key per MCP
-                    ├ Postgres: (sub, mcp_id) → enc(key)   (XChaCha20-Poly1305)
-                    └ /mcp/<id> ──inject <MCP's header>──► backend MCP pod
-                                                             e.g. fastmail-cli mcp --http
-```
 
-Each MCP is a backend pod the gateway proxies to (Model B); the gateway links no
-MCP code. Backends stay dumb: key in → work out. Adding an MCP is an entry in
-`mcps.json`, not code. Hydra + Postgres are separate deployments; only Hydra
-serves OAuth endpoints (the gateway publishes protected-resource metadata
-pointing at it, and a `/register` DCR proxy).
-
-State is disposable: lose the DB and users just re-paste their keys.
+- **Hydra** is the only thing serving OAuth. The gateway publishes
+  protected-resource metadata pointing at it and proxies Dynamic Client
+  Registration (`/register`) to Hydra's admin API — Claude auto-registers, so
+  DCR stays open.
+- **The gateway** validates the opaque bearer by introspection (no JWT ever
+  reaches a client), looks up the caller's per-MCP key, and reverse-proxies
+  `/{id}` to that MCP's backend pod, injecting the key as the MCP's own header.
+- **Backends stay dumb**: key in → work out. They link no gateway code and hold
+  no auth of their own. Adding an MCP is one entry in [`mcps.json`](mcps.json),
+  not code (Model B).
+- **State is disposable**: lose Postgres and users just re-paste their keys
+  (encrypted at rest with XChaCha20-Poly1305). Hydra + Postgres are separate
+  deployments.
 
 ## Local development
 
@@ -63,9 +74,8 @@ Claude's connector is fetched by Anthropic's servers, not your machine, so
 `localhost` is unreachable — and **both** the service and Hydra must be public
 (Claude talks to each directly). One tunnel, two hostnames does it:
 
-Hostnames default to `mcp.radiosilence.dev` / `auth.radiosilence.dev` (dev;
-prod is `mcp.blit.cc` / `auth.blit.cc`). Set `GATEWAY_HOST` / `AUTH_HOST` in
-`mise.toml` or per-invocation for your own domain. Then:
+Set `GATEWAY_HOST` / `AUTH_HOST` (in `mise.toml` or per-invocation) to two
+hostnames on a domain you control — one for the gateway, one for Hydra. Then:
 
 1. Point the GitHub OAuth app's callback at
    `https://<GATEWAY_HOST>/auth/github/callback`.
@@ -73,8 +83,8 @@ prod is `mcp.blit.cc` / `auth.blit.cc`). Set `GATEWAY_HOST` / `AUTH_HOST` in
    `cloudflared tunnel login` if not already), writes `cloudflared/`, and brings
    the stack up with the tunnel URLs wired in automatically.
 3. `mise run verify` — checks the OAuth discovery chain over the tunnel.
-4. Add `https://<GATEWAY_HOST>/<id>` as a custom connector in Claude — e.g.
-   `https://mcp.radiosilence.dev/fastmail`.
+4. Add `https://<GATEWAY_HOST>/{id}` as a custom connector in Claude — e.g.
+   `https://<GATEWAY_HOST>/fastmail`.
 
 Host login (`cert.pem`) is only for provisioning; the container authenticates
 the *run* with the per-tunnel `creds.json`. The service and Hydra stay plain
@@ -124,33 +134,25 @@ that same shape translated to jaritanet's Pulumi. This repo holds no cluster
 manifests by design. See [`DEPLOY.md`](DEPLOY.md) for the prod deltas (domains,
 TLS, admin-not-exposed, secrets from the backend, opaque tokens).
 
-## ⚠️ Security review items (before this is internet-facing)
+## Security model
 
-These are deliberately stubbed/simplified in this first cut:
+Built to be internet-facing. The load-bearing pieces:
 
-- **Access tokens are opaque + introspected** at Hydra (no JWT reaches any
-  client; tokens are revocable). Introspection is per-request — add a short TTL
-  cache if load warrants; note that caching trades away instant revocation.
-- **DCR runs through our `/register` proxy** (Hydra advertises it; we create the
-  client via Hydra admin and return a Claude-valid response). Hydra itself runs
-  `--dev` in compose — **not safe for prod**; drop `--dev` and configure real
-  TLS/secrets there.
-- **Encryption key rotation** is not implemented — rotating `TOKEN_ENC_KEY`
-  currently orphans stored tokens (users re-paste). Fine given disposable state,
-  but decide intentionally.
-- **DCR is public + consent is auto-granted.** Claude requires Dynamic Client
-  Registration (it auto-registers), so DCR must stay enabled — but public DCR +
-  auto-consent means anyone could register a client and phish a token-holder
-  into authorizing it. The control against this is a **GitHub login
-  allowlist** (`GH_ALLOWED`, see [`config.rs`](src/config.rs)): a
-  comma-separated list of GitHub logins permitted to authenticate, checked in
-  the GitHub OAuth callback ([`auth/routes.rs`](src/auth/routes.rs)) before a
-  session or Hydra login is granted — a registered client is useless without a
-  token, and tokens only issue to allowlisted users. **Leaving `GH_ALLOWED`
-  unset or empty allows *any* GitHub account to authenticate**; the gateway
-  logs a loud warning at boot in that case ([`main.rs`](src/main.rs)) but does
-  not refuse to start. Set `GH_ALLOWED` before a public deploy. Add a real
-  consent screen too if you ever go multi-user.
-- Custodial risk, amplified: the gateway holds keys for *every* MCP and user
-  (e.g. full-mailbox Fastmail tokens). Keep `TOKEN_ENC_KEY` in a real secret
-  store with tight RBAC; never in the image or git.
+- **Login allowlist** (`GH_ALLOWED`) — comma-separated GitHub logins permitted
+  to authenticate, enforced in the OAuth callback. DCR is public (Claude
+  requires it) and consent is auto-granted, so this allowlist is what stops a
+  stranger who registered a client from ever getting a token. **Leaving it empty
+  lets _any_ GitHub account in** — the gateway logs a loud warning at boot but
+  still starts, so set it before you expose anything.
+- **Opaque tokens** — access tokens are introspected at Hydra per request; no
+  JWT reaches a client, and tokens are revocable.
+- **Per-IP rate limiting** on `/register` and the auth routes (forwarded-IP
+  aware, since a reverse proxy fronts this).
+- **Credentials encrypted at rest** — per-user MCP keys are sealed with
+  XChaCha20-Poly1305. `TOKEN_ENC_KEY` is the only thing protecting them: keep it
+  in a real secret store, never in the image or git. Rotating it orphans stored
+  keys (users re-paste) — acceptable given disposable state, but deliberate.
+- **Hydra admin API is never exposed** — introspection, login/consent and DCR
+  client-create use the cluster-internal admin port only.
+- **Custodial by nature** — the gateway holds keys for every user and MCP (e.g.
+  full-mailbox Fastmail tokens). Tight RBAC on the secret and the DB is on you.

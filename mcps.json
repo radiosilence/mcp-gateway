@@ -1,0 +1,10 @@
+[
+  {
+    "id": "fastmail",
+    "name": "Fastmail",
+    "backend": "http://fastmail-mcp:8080/mcp",
+    "credential_header": "X-Fastmail-Token",
+    "key_help_url": "https://app.fastmail.com/settings/security/tokens",
+    "key_hint": "fmu1-…"
+  }
+]

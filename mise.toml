@@ -33,13 +33,14 @@ cloudflared tunnel list --output json | jq -e --arg n "$TUNNEL_NAME" '.[]|select
 UUID=$(cloudflared tunnel list --output json | jq -r --arg n "$TUNNEL_NAME" '.[]|select(.name==$n)|.id')
 cloudflared tunnel route dns "$TUNNEL_NAME" "$FASTMAIL_HOST" || true
 cloudflared tunnel route dns "$TUNNEL_NAME" "$AUTH_HOST" || true
-cp "$HOME/.cloudflared/$UUID.json" cloudflared/creds.json
+rm -f cloudflared/creds.json cloudflared/config.yml
+install -m 600 "$HOME/.cloudflared/$UUID.json" cloudflared/creds.json
 cat > cloudflared/config.yml <<CFG
 tunnel: $UUID
 credentials-file: /etc/cloudflared/creds.json
 ingress:
   - hostname: $FASTMAIL_HOST
-    service: http://service:8080
+    service: http://gateway:8080
   - hostname: $AUTH_HOST
     service: http://hydra:4444
   - service: http_status:404

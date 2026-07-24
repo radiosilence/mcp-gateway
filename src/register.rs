@@ -1,0 +1,75 @@
+//! Dynamic Client Registration proxy (RFC 7591).
+//!
+//! Hydra advertises this as its `registration_endpoint` (via
+//! `webfinger.oidc_discovery.client_registration_url`). We create the client
+//! through Hydra's admin API and return a clean response — Hydra's own DCR
+//! output includes empty `client_uri`/`logo_uri`/`tos_uri` fields that Claude
+//! rejects, so we build the response ourselves and omit empties.
+//!
+//! Public + unauthenticated by design (that's DCR). The real control against
+//! abuse is the login allowlist gating token issuance — see README.
+
+use axum::Json;
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use serde_json::{Map, Value, json};
+
+use crate::error::{AppError, AppResult};
+use crate::state::AppState;
+
+pub async fn register(
+    State(state): State<AppState>,
+    Json(req): Json<Value>,
+) -> AppResult<Response> {
+    let take = |key: &str, default: Value| {
+        req.get(key)
+            .cloned()
+            .filter(|v| !v.is_null())
+            .unwrap_or(default)
+    };
+
+    // Translate the DCR request into a Hydra admin client-create body.
+    let body = json!({
+        "client_name": take("client_name", json!("MCP Client")),
+        "redirect_uris": take("redirect_uris", json!([])),
+        "grant_types": take("grant_types", json!(["authorization_code", "refresh_token"])),
+        "response_types": take("response_types", json!(["code"])),
+        "scope": take("scope", json!("openid offline")),
+        "token_endpoint_auth_method": take("token_endpoint_auth_method", json!("none")),
+    });
+
+    let created = state
+        .hydra
+        .create_client(&body)
+        .await
+        .map_err(|e| AppError::Upstream(e.to_string()))?;
+
+    // Build a clean RFC 7591 response — only non-empty fields.
+    let mut out = Map::new();
+    for key in [
+        "client_id",
+        "client_secret",
+        "client_name",
+        "redirect_uris",
+        "grant_types",
+        "response_types",
+        "scope",
+        "token_endpoint_auth_method",
+    ] {
+        put(&mut out, key, created.get(key));
+    }
+    out.insert("client_secret_expires_at".into(), json!(0));
+
+    Ok((StatusCode::CREATED, Json(Value::Object(out))).into_response())
+}
+
+/// Insert `key` only if the value is present, non-null, and not an empty string.
+fn put(out: &mut Map<String, Value>, key: &str, value: Option<&Value>) {
+    if let Some(v) = value {
+        let empty_str = v.as_str().map(str::is_empty).unwrap_or(false);
+        if !v.is_null() && !empty_str {
+            out.insert(key.to_string(), v.clone());
+        }
+    }
+}

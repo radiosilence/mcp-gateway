@@ -10,7 +10,8 @@ mod config;
 mod crypto;
 mod dashboard;
 mod error;
-mod mcp;
+mod proxy;
+mod register;
 mod state;
 mod store;
 mod well_known;
@@ -19,7 +20,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::Router;
-use axum::routing::{get, post};
+use axum::routing::{any, get, post};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
@@ -34,7 +35,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "fastmail_mcp_service=info,tower_http=info,warn".into()),
+                .unwrap_or_else(|_| "mcp_gateway=info,tower_http=info,warn".into()),
         )
         .init();
 
@@ -65,17 +66,17 @@ async fn main() -> Result<()> {
         .route("/login", get(auth::routes::login))
         .route("/logout", get(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
-        .route("/dashboard/token", post(dashboard::set_token))
-        .route("/dashboard/token/delete", post(dashboard::delete_token))
-        .route("/dashboard/token/test", post(dashboard::test_token))
+        .route("/dashboard/{mcp_id}/token", post(dashboard::set_credential))
+        .route("/dashboard/{mcp_id}/delete", post(dashboard::delete_credential))
         .route("/auth/login", get(auth::routes::hydra_login))
         .route("/auth/consent", get(auth::routes::hydra_consent))
         .route("/auth/github/callback", get(auth::routes::github_callback))
+        .route("/register", post(register::register))
         .route(
             "/.well-known/oauth-protected-resource",
             get(well_known::protected_resource),
         )
-        .merge(mcp::router(state.clone()))
+        .route("/mcp/{id}", any(proxy::handle))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 

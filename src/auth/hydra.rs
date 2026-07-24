@@ -97,6 +97,29 @@ impl HydraAdmin {
         Ok(if resp.active { resp.sub } else { None })
     }
 
+    /// Create an OAuth2 client via Hydra's admin API. Used by our DCR proxy
+    /// (`/register`): Hydra OSS doesn't serve public DCR, and Claude rejects
+    /// Hydra's DCR response shape anyway, so we create the client here and
+    /// return a clean response ourselves.
+    pub async fn create_client(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let url = format!("{}/admin/clients", self.base);
+        let resp = self
+            .http
+            .post(&url)
+            .json(body)
+            .send()
+            .await
+            .context("hydra create_client")?
+            .error_for_status()
+            .context("hydra create_client status")?
+            .json()
+            .await?;
+        Ok(resp)
+    }
+
     pub async fn get_consent(&self, consent_challenge: &str) -> Result<ConsentRequest> {
         let url = format!("{}/admin/oauth2/auth/requests/consent", self.base);
         let resp = self

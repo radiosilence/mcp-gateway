@@ -5,6 +5,27 @@
 //! production) and are never logged.
 
 use anyhow::{Context, Result};
+use serde::Deserialize;
+
+/// A backend MCP the gateway fronts. Registry is loaded from a JSON file
+/// (`MCP_REGISTRY`, default `mcps.json`), so adding an MCP is config, not code.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Mcp {
+    /// URL slug + storage key, e.g. "fastmail" → routed at `/mcp/fastmail`.
+    pub id: String,
+    /// Human name for the dashboard.
+    pub name: String,
+    /// Backend MCP endpoint to proxy to, e.g. `http://fastmail-mcp:8080/mcp`.
+    pub backend: String,
+    /// Header the backend expects the per-user secret in, e.g. `X-Fastmail-Token`.
+    pub credential_header: String,
+    /// Optional link shown in the dashboard for where to get the key.
+    #[serde(default)]
+    pub key_help_url: Option<String>,
+    /// Optional hint text for the key input.
+    #[serde(default)]
+    pub key_hint: Option<String>,
+}
 
 #[derive(Clone)]
 pub struct Config {
@@ -26,6 +47,8 @@ pub struct Config {
     /// GitHub OAuth app credentials (upstream identity).
     pub github_client_id: String,
     pub github_client_secret: String,
+    /// Registry of backend MCPs this gateway fronts.
+    pub mcps: Vec<Mcp>,
 }
 
 impl Config {
@@ -53,6 +76,7 @@ impl Config {
             hydra_admin_url: env("HYDRA_ADMIN_URL")?,
             github_client_id: env("GITHUB_CLIENT_ID")?,
             github_client_secret: env("GITHUB_CLIENT_SECRET")?,
+            mcps: load_registry(&env_or("MCP_REGISTRY", "mcps.json"))?,
         })
     }
 
@@ -63,6 +87,18 @@ impl Config {
             self.public_url.trim_end_matches('/')
         )
     }
+
+    pub fn mcp(&self, id: &str) -> Option<&Mcp> {
+        self.mcps.iter().find(|m| m.id == id)
+    }
+}
+
+fn load_registry(path: &str) -> Result<Vec<Mcp>> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("reading MCP registry at {path}"))?;
+    let mcps: Vec<Mcp> = serde_json::from_str(&raw)
+        .with_context(|| format!("parsing MCP registry at {path}"))?;
+    Ok(mcps)
 }
 
 fn env(key: &str) -> Result<String> {

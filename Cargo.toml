@@ -1,20 +1,17 @@
 [package]
-name = "fastmail-mcp-service"
+name = "mcp-gateway"
 version = "0.1.0"
 edition = "2024"
-description = "Hosted, OAuth-fronted MCP server for Fastmail — multi-tenant wrapper around fastmail-cli"
+description = "OAuth-fronted gateway for self-hosted MCP servers: one AS + credential vault + dashboard, routing to per-MCP backends with the right secret injected"
 repository = "https://github.com/radiosilence/fastmail-mcp-service"
 license = "MIT"
 
-[dependencies]
-# Core Fastmail machinery (JMAP + GraphQL + MCP tools), linked as a library.
-# Pin to the branch until the lib surface lands on a release.
-fastmail-cli = { git = "https://github.com/radiosilence/fastmail-cli", branch = "feat/mcp-per-request-token" }
-rmcp = { version = "1", features = [
-  "server",
-  "transport-streamable-http-server",
-] }
+[[bin]]
+name = "mcp-gateway"
+path = "src/main.rs"
 
+[dependencies]
+# Generic gateway — it links no MCP; each MCP is a backend it proxies to.
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
@@ -36,10 +33,12 @@ chacha20poly1305 = "0.10"
 rand = "0.8"
 base64 = "0.22"
 
-# HTTP client for Hydra introspection/admin API, GitHub OAuth
+# HTTP client for Hydra introspection/admin, GitHub OAuth, and proxying MCP
+# traffic to backends (streaming responses for MCP's SSE).
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "rustls-tls",
+  "stream",
 ] }
 
 # Templating for the dashboard

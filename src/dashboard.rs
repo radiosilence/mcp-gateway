@@ -1,9 +1,8 @@
-//! Minimal dashboard: log in with our OAuth (GitHub upstream), then set /
-//! update / delete / test your Fastmail token. Post-Redirect-Get with a `flash`
-//! query param for feedback.
+//! Dashboard: log in with our OAuth (GitHub upstream), then manage a credential
+//! per registered MCP. Post-Redirect-Get with a `flash` query param.
 
 use askama::Template;
-use axum::extract::{Form, Query, State};
+use axum::extract::{Form, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
@@ -16,14 +15,22 @@ use crate::state::AppState;
 #[template(path = "index.html")]
 struct IndexTemplate;
 
+struct McpView {
+    id: String,
+    name: String,
+    has_credential: bool,
+    updated_at: String,
+    connector_url: String,
+    key_help_url: String,
+    key_hint: String,
+}
+
 #[derive(Template)]
 #[template(path = "dashboard.html")]
 struct DashboardTemplate {
     login: String,
-    has_token: bool,
-    updated_at: String,
     flash: String,
-    mcp_url: String,
+    mcps: Vec<McpView>,
 }
 
 #[derive(Deserialize)]
@@ -60,78 +67,75 @@ pub async fn dashboard(
     let Some(session) = current_session(&state, &headers).await else {
         return Ok(Redirect::to("/login").into_response());
     };
-    let meta = state
-        .store
-        .token_meta(&session.sub)
-        .await
-        .map_err(AppError::Internal)?;
-    let (has_token, updated_at) = match meta {
-        Some(m) => (true, m.updated_at.to_string()),
-        None => (false, String::new()),
-    };
+    let base = state.config.public_url.trim_end_matches('/');
+
+    let mut mcps = Vec::new();
+    for m in &state.config.mcps {
+        let meta = state
+            .store
+            .credential_meta(&session.sub, &m.id)
+            .await
+            .map_err(AppError::Internal)?;
+        let (has_credential, updated_at) = match meta {
+            Some(meta) => (true, meta.updated_at.to_string()),
+            None => (false, String::new()),
+        };
+        mcps.push(McpView {
+            id: m.id.clone(),
+            name: m.name.clone(),
+            has_credential,
+            updated_at,
+            connector_url: format!("{base}/mcp/{}", m.id),
+            key_help_url: m.key_help_url.clone().unwrap_or_default(),
+            key_hint: m.key_hint.clone().unwrap_or_else(|| "paste key…".into()),
+        });
+    }
+
     let tpl = DashboardTemplate {
         login: session.login,
-        has_token,
-        updated_at,
         flash: q.flash,
-        mcp_url: format!("{}/mcp", state.config.public_url.trim_end_matches('/')),
+        mcps,
     };
     let html = tpl.render().map_err(|e| AppError::Internal(e.into()))?;
     Ok(Html(html).into_response())
 }
 
-pub async fn set_token(
+pub async fn set_credential(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Path(mcp_id): Path<String>,
     Form(f): Form<TokenForm>,
 ) -> AppResult<Response> {
     let Some(session) = current_session(&state, &headers).await else {
         return Ok(Redirect::to("/login").into_response());
     };
+    if state.config.mcp(&mcp_id).is_none() {
+        return Err(AppError::BadRequest("unknown mcp".into()));
+    }
     let token = f.token.trim();
     if token.is_empty() {
-        return Ok(flash_redirect("Token cannot be empty"));
+        return Ok(flash_redirect("Key cannot be empty"));
     }
     state
         .store
-        .set_token(&session.sub, token)
+        .set_credential(&session.sub, &mcp_id, token)
         .await
         .map_err(AppError::Internal)?;
-    Ok(flash_redirect("Token saved"))
+    Ok(flash_redirect("Key saved"))
 }
 
-pub async fn delete_token(
+pub async fn delete_credential(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Path(mcp_id): Path<String>,
 ) -> AppResult<Response> {
     let Some(session) = current_session(&state, &headers).await else {
         return Ok(Redirect::to("/login").into_response());
     };
     state
         .store
-        .delete_token(&session.sub)
+        .delete_credential(&session.sub, &mcp_id)
         .await
         .map_err(AppError::Internal)?;
-    Ok(flash_redirect("Token deleted"))
-}
-
-/// Test the stored token by running the JMAP session handshake with it.
-pub async fn test_token(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Response> {
-    let Some(session) = current_session(&state, &headers).await else {
-        return Ok(Redirect::to("/login").into_response());
-    };
-    let token = match state
-        .store
-        .get_token(&session.sub)
-        .await
-        .map_err(AppError::Internal)?
-    {
-        Some(t) => t,
-        None => return Ok(flash_redirect("No token set")),
-    };
-    let mut client = fastmail_cli::jmap::JmapClient::new(token);
-    match client.authenticate().await {
-        Ok(_) => Ok(flash_redirect("Connection OK — token is valid")),
-        Err(e) => Ok(flash_redirect(&format!("Connection failed: {e}"))),
-    }
+    Ok(flash_redirect("Key deleted"))
 }

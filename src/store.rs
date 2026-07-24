@@ -60,50 +60,58 @@ impl Store {
         Ok(())
     }
 
-    /// Fetch and decrypt the Fastmail token for `sub`, if one is stored.
-    pub async fn get_token(&self, sub: &str) -> Result<Option<String>> {
-        let row = sqlx::query("SELECT enc_token FROM fastmail_tokens WHERE sub = $1")
-            .bind(sub)
-            .fetch_optional(&self.pool)
-            .await?;
+    /// Fetch and decrypt a user's credential for a given MCP, if stored.
+    pub async fn get_credential(&self, sub: &str, mcp_id: &str) -> Result<Option<String>> {
+        let row = sqlx::query(
+            "SELECT enc_secret FROM credentials WHERE sub = $1 AND mcp_id = $2",
+        )
+        .bind(sub)
+        .bind(mcp_id)
+        .fetch_optional(&self.pool)
+        .await?;
         match row {
             Some(row) => {
-                let sealed: String = row.get("enc_token");
+                let sealed: String = row.get("enc_secret");
                 Ok(Some(self.cipher.open(&sealed)?))
             }
             None => Ok(None),
         }
     }
 
-    /// Encrypt and upsert the Fastmail token for `sub`.
-    pub async fn set_token(&self, sub: &str, token: &str) -> Result<()> {
-        let sealed = self.cipher.seal(token)?;
+    /// Encrypt and upsert a user's credential for an MCP.
+    pub async fn set_credential(&self, sub: &str, mcp_id: &str, secret: &str) -> Result<()> {
+        let sealed = self.cipher.seal(secret)?;
         sqlx::query(
-            "INSERT INTO fastmail_tokens (sub, enc_token, updated_at)
-             VALUES ($1, $2, now())
-             ON CONFLICT (sub) DO UPDATE SET enc_token = EXCLUDED.enc_token, updated_at = now()",
+            "INSERT INTO credentials (sub, mcp_id, enc_secret, updated_at)
+             VALUES ($1, $2, $3, now())
+             ON CONFLICT (sub, mcp_id) DO UPDATE SET enc_secret = EXCLUDED.enc_secret, updated_at = now()",
         )
         .bind(sub)
+        .bind(mcp_id)
         .bind(&sealed)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
-    pub async fn delete_token(&self, sub: &str) -> Result<()> {
-        sqlx::query("DELETE FROM fastmail_tokens WHERE sub = $1")
+    pub async fn delete_credential(&self, sub: &str, mcp_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM credentials WHERE sub = $1 AND mcp_id = $2")
             .bind(sub)
+            .bind(mcp_id)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
-    /// Non-secret metadata for the dashboard.
-    pub async fn token_meta(&self, sub: &str) -> Result<Option<TokenMeta>> {
-        let row = sqlx::query("SELECT updated_at FROM fastmail_tokens WHERE sub = $1")
-            .bind(sub)
-            .fetch_optional(&self.pool)
-            .await?;
+    /// Non-secret metadata for the dashboard (is a credential set, and when).
+    pub async fn credential_meta(&self, sub: &str, mcp_id: &str) -> Result<Option<TokenMeta>> {
+        let row = sqlx::query(
+            "SELECT updated_at FROM credentials WHERE sub = $1 AND mcp_id = $2",
+        )
+        .bind(sub)
+        .bind(mcp_id)
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.map(|row| TokenMeta {
             updated_at: row.get("updated_at"),
         }))

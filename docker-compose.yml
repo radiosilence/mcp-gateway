@@ -49,10 +49,12 @@ services:
       # Opaque access tokens (default) — the service introspects them, so no
       # JWT ever reaches a client. Revocable at Hydra.
       OAUTH2_EXPOSE_INTERNAL_ERRORS: "true"
-      # Public Dynamic Client Registration — Claude auto-registers via this.
-      # Without it Hydra omits registration_endpoint from the metadata and the
-      # connector can't register. DCR endpoint: /openid/register.
-      OIDC_DYNAMIC_CLIENT_REGISTRATION_ENABLED: "true"
+      # Self-hosted Hydra OSS doesn't serve public DCR (that's an Ory Network
+      # feature), and Claude rejects Hydra's DCR response anyway (empty
+      # client_uri/logo_uri/tos_uri). So we advertise OUR /register as the
+      # registration_endpoint; it proxies to Hydra's admin API and returns a
+      # Claude-valid response.
+      WEBFINGER_OIDC_DISCOVERY_CLIENT_REGISTRATION_URL: ${PUBLIC_URL:-http://localhost:8080}/register
       LOG_LEVEL: info
     ports:
       - "4444:4444" # public
@@ -61,7 +63,8 @@ services:
       hydra-migrate:
         condition: service_completed_successfully
 
-  service:
+  # The generic gateway: OAuth + credential vault + dashboard + routing.
+  gateway:
     build: .
     env_file: .env
     environment:
@@ -74,6 +77,9 @@ services:
       # metadata); admin is in-network, used for introspection + login/consent.
       HYDRA_ISSUER: ${HYDRA_ISSUER:-http://localhost:4444}
       HYDRA_ADMIN_URL: http://hydra:4445
+      MCP_REGISTRY: /etc/mcp-gateway/mcps.json
+    volumes:
+      - ./mcps.json:/etc/mcp-gateway/mcps.json:ro
     ports:
       - "8080:8080"
     depends_on:
@@ -81,12 +87,24 @@ services:
         condition: service_healthy
       hydra:
         condition: service_started
+      fastmail-mcp:
+        condition: service_started
+
+  # A backend MCP: fastmail-cli in HTTP mode. The gateway proxies /mcp/fastmail
+  # here and injects X-Fastmail-Token. Internal only — no host port.
+  fastmail-mcp:
+    build:
+      context: .
+      dockerfile: deploy/fastmail-mcp.Dockerfile
+    command: ["mcp", "--http", "0.0.0.0:8080"]
+    expose:
+      - "8080"
 
   # Opt-in tunnel for Claude-connector testing. Don't run this directly — use
   # `mise run tunnel`, which provisions the tunnel + DNS, writes
   # cloudflared/{config.yml,creds.json} (gitignored, mounted below), and brings
   # the stack up with the right public URLs. One tunnel, two hostnames →
-  # service:8080 + hydra:4444.
+  # gateway:8080 + hydra:4444.
   cloudflared:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
@@ -95,7 +113,7 @@ services:
     volumes:
       - ./cloudflared:/etc/cloudflared:ro
     depends_on:
-      - service
+      - gateway
       - hydra
 
 volumes:

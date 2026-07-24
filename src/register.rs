@@ -29,13 +29,32 @@ pub async fn register(
             .unwrap_or(default)
     };
 
+    // Register the client allowing every scope an MCP client might request:
+    // Claude Desktop asks for `offline`, Claude Code for `offline_access` (both
+    // grant a refresh token in Hydra). Union the requested scope with the
+    // standard set so the later authorization request is always a subset —
+    // otherwise Hydra rejects it with invalid_scope. We auto-grant at consent
+    // anyway (single-tenant), so widening the allowed set is safe.
+    let requested_scope = take("scope", json!(""));
+    let mut scopes: Vec<&str> = requested_scope
+        .as_str()
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect();
+    for s in ["openid", "offline", "offline_access"] {
+        if !scopes.contains(&s) {
+            scopes.push(s);
+        }
+    }
+    let scope = scopes.join(" ");
+
     // Translate the DCR request into a Hydra admin client-create body.
     let body = json!({
         "client_name": take("client_name", json!("MCP Client")),
         "redirect_uris": take("redirect_uris", json!([])),
         "grant_types": take("grant_types", json!(["authorization_code", "refresh_token"])),
         "response_types": take("response_types", json!(["code"])),
-        "scope": take("scope", json!("openid offline")),
+        "scope": scope,
         "token_endpoint_auth_method": take("token_endpoint_auth_method", json!("none")),
     });
 

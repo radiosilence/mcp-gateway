@@ -17,6 +17,6 @@ pub async fn protected_resource(State(state): State<AppState>) -> Json<Value> {
         "resource": resource,
         "authorization_servers": [issuer],
         "bearer_methods_supported": ["header"],
-        "scopes_supported": ["openid", "offline"],
+        "scopes_supported": ["openid", "offline", "offline_access"],
     }))
 }

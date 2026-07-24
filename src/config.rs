@@ -17,18 +17,11 @@ pub struct Config {
     pub database_url: String,
     /// 32-byte key for XChaCha20-Poly1305, base64 (standard) encoded.
     pub token_enc_key: Vec<u8>,
-    /// HS256 secret for signing our own session / state cookies.
-    pub session_secret: String,
-    /// Where *this service* reaches Hydra's public endpoints to fetch JWKS —
-    /// may be a cluster-internal address, e.g. `http://hydra:4444`.
-    pub hydra_public_url: String,
-    /// The issuer string Hydra stamps into tokens (`iss`) and that browsers/
-    /// Claude use to reach it, e.g. `https://auth.radiosilence.dev`. Equal to
-    /// `hydra_public_url` in production; differs only in local docker where the
-    /// service and the browser reach Hydra by different hostnames. Used for the
-    /// `iss` check and the protected-resource metadata.
+    /// Hydra's public issuer URL — what Claude uses to reach the AS, advertised
+    /// in the protected-resource metadata, e.g. `https://auth.radiosilence.dev`.
     pub hydra_issuer: String,
     /// Hydra admin API base, cluster-internal only, e.g. `http://hydra-admin:4445`.
+    /// Used for token introspection and the login/consent handshake.
     pub hydra_admin_url: String,
     /// GitHub OAuth app credentials (upstream identity).
     pub github_client_id: String,
@@ -51,17 +44,12 @@ impl Config {
             bytes
         };
 
-        let hydra_public_url = env("HYDRA_PUBLIC_URL")?;
-        let hydra_issuer = env_or("HYDRA_ISSUER", &hydra_public_url);
-
         Ok(Self {
             bind_addr: env_or("BIND_ADDR", "0.0.0.0:8080"),
             public_url: env("PUBLIC_URL")?,
             database_url: env("DATABASE_URL")?,
             token_enc_key,
-            session_secret: env("SESSION_SECRET")?,
-            hydra_public_url,
-            hydra_issuer,
+            hydra_issuer: env("HYDRA_ISSUER")?,
             hydra_admin_url: env("HYDRA_ADMIN_URL")?,
             github_client_id: env("GITHUB_CLIENT_ID")?,
             github_client_secret: env("GITHUB_CLIENT_SECRET")?,

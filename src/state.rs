@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use crate::auth::hydra::HydraAdmin;
-use crate::auth::jwks::JwksCache;
 use crate::config::Config;
 use crate::store::Store;
 
@@ -13,6 +12,5 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub store: Store,
     pub http: reqwest::Client,
-    pub jwks: JwksCache,
     pub hydra: HydraAdmin,
 }

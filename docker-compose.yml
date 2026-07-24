@@ -45,8 +45,8 @@ services:
       URLS_LOGIN: http://localhost:8080/auth/login
       URLS_CONSENT: http://localhost:8080/auth/consent
       SECRETS_SYSTEM: dev-system-secret-change-me-at-least-32-chars
-      # Issue JWT access tokens so the service validates locally via JWKS.
-      STRATEGIES_ACCESS_TOKEN: jwt
+      # Opaque access tokens (default) — the service introspects them, so no
+      # JWT ever reaches a client. Revocable at Hydra.
       OAUTH2_EXPOSE_INTERNAL_ERRORS: "true"
       LOG_LEVEL: info
     ports:
@@ -63,9 +63,8 @@ services:
       BIND_ADDR: 0.0.0.0:8080
       PUBLIC_URL: http://localhost:8080
       DATABASE_URL: postgres://fastmail:fastmail@postgres:5432/fastmail_mcp
-      # Service reaches Hydra in-network for JWKS; issuer stays localhost:4444
-      # (what the browser/Claude and the token `iss` use).
-      HYDRA_PUBLIC_URL: http://hydra:4444
+      # Issuer is what the browser/Claude use to reach Hydra (advertised in
+      # metadata); admin is in-network, used for introspection + login/consent.
       HYDRA_ISSUER: http://localhost:4444
       HYDRA_ADMIN_URL: http://hydra:4445
     ports:

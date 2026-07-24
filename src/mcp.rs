@@ -46,26 +46,27 @@ async fn bearer_auth(State(state): State<AppState>, mut req: Request, next: Next
         None => return challenge(&state, "missing bearer token"),
     };
 
-    let claims =
-        match crate::auth::jwt::verify(&token, &state.config.hydra_issuer, &state.jwks).await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::debug!(error = %e, "bearer verification failed");
-                return challenge(&state, "invalid token");
-            }
-        };
+    // Opaque token → introspect at Hydra → subject. No JWT, revocable.
+    let sub = match state.hydra.introspect(&token).await {
+        Ok(Some(sub)) => sub,
+        Ok(None) => return challenge(&state, "inactive token"),
+        Err(e) => {
+            tracing::debug!(error = %e, "introspection failed");
+            return challenge(&state, "introspection failed");
+        }
+    };
 
     // Resolve the caller's Fastmail token. Absent is not fatal: let the MCP
     // handshake/tool-listing proceed; graphql calls return a friendly
     // "set your token in the dashboard" error from the core.
-    match state.store.get_token(&claims.sub).await {
+    match state.store.get_token(&sub).await {
         Ok(Some(fm_token)) => {
             if let Ok(value) = HeaderValue::from_str(&fm_token) {
                 req.headers_mut()
                     .insert(axum::http::HeaderName::from_static(TOKEN_HEADER), value);
             }
         }
-        Ok(None) => tracing::debug!(sub = %claims.sub, "no fastmail token stored"),
+        Ok(None) => tracing::debug!(%sub, "no fastmail token stored"),
         Err(e) => tracing::error!(error = %e, "token lookup failed"),
     }
 

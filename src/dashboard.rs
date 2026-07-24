@@ -8,7 +8,7 @@ use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
-use crate::auth::routes::session_claims;
+use crate::auth::routes::current_session;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
@@ -43,7 +43,7 @@ fn flash_redirect(msg: &str) -> Response {
 }
 
 pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if session_claims(&headers, &state.config.session_secret).is_some() {
+    if current_session(&state, &headers).await.is_some() {
         return Redirect::to("/dashboard").into_response();
     }
     match IndexTemplate.render() {
@@ -57,7 +57,7 @@ pub async fn dashboard(
     headers: HeaderMap,
     Query(q): Query<FlashQuery>,
 ) -> AppResult<Response> {
-    let Some(session) = session_claims(&headers, &state.config.session_secret) else {
+    let Some(session) = current_session(&state, &headers).await else {
         return Ok(Redirect::to("/login").into_response());
     };
     let meta = state
@@ -85,7 +85,7 @@ pub async fn set_token(
     headers: HeaderMap,
     Form(f): Form<TokenForm>,
 ) -> AppResult<Response> {
-    let Some(session) = session_claims(&headers, &state.config.session_secret) else {
+    let Some(session) = current_session(&state, &headers).await else {
         return Ok(Redirect::to("/login").into_response());
     };
     let token = f.token.trim();
@@ -104,7 +104,7 @@ pub async fn delete_token(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    let Some(session) = session_claims(&headers, &state.config.session_secret) else {
+    let Some(session) = current_session(&state, &headers).await else {
         return Ok(Redirect::to("/login").into_response());
     };
     state
@@ -117,7 +117,7 @@ pub async fn delete_token(
 
 /// Test the stored token by running the JMAP session handshake with it.
 pub async fn test_token(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Response> {
-    let Some(session) = session_claims(&headers, &state.config.session_secret) else {
+    let Some(session) = current_session(&state, &headers).await else {
         return Ok(Redirect::to("/login").into_response());
     };
     let token = match state

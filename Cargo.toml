@@ -36,10 +36,7 @@ chacha20poly1305 = "0.10"
 rand = "0.8"
 base64 = "0.22"
 
-# Auth: validate Hydra-issued JWTs, sign our own session cookies
-jsonwebtoken = "9"
-
-# HTTP client for JWKS, Hydra admin API, GitHub OAuth
+# HTTP client for Hydra introspection/admin API, GitHub OAuth
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "rustls-tls",

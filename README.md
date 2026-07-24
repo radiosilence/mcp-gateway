@@ -27,7 +27,7 @@ The OAuth token proves *who you are*; it is never the Fastmail token.
 ```
 Claude ──OAuth──► Hydra (AS: DCR, PKCE, tokens)   ← login/consent delegated back to us
 Claude ──Bearer─► this service (axum, N pods)
-                    ├ validate JWT vs Hydra JWKS → sub
+                    ├ introspect opaque bearer at Hydra → sub
                     ├ dashboard: set/update/delete Fastmail token
                     ├ Postgres: sub → enc(fastmail_token)   (XChaCha20-Poly1305)
                     └ /mcp → fastmail-cli core, X-Fastmail-Token injected → JMAP
@@ -61,26 +61,23 @@ All via env (see `.env.example`). Notable:
 |-----|---------|
 | `PUBLIC_URL` | browser-facing base of this service |
 | `TOKEN_ENC_KEY` | 32-byte base64 key; the only thing protecting stored tokens |
-| `HYDRA_PUBLIC_URL` | where *this service* fetches Hydra JWKS (may be internal) |
-| `HYDRA_ISSUER` | token `iss` / browser-facing Hydra URL (defaults to `HYDRA_PUBLIC_URL`) |
-| `HYDRA_ADMIN_URL` | Hydra admin API — cluster-internal only |
+| `HYDRA_ISSUER` | browser/Claude-facing Hydra URL; advertised in protected-resource metadata |
+| `HYDRA_ADMIN_URL` | Hydra admin API (introspection + login/consent) — cluster-internal only |
 
 ## Deploy
 
-`deploy/k8s/` holds the manifests (namespace, Postgres, Hydra + migrate Job,
-the service, ingress with cert-manager TLS). `deploy/terraform/` is a child
-module for jaritanet: it manages the namespace + Secret (sourced from the secret
-backend) and applies the manifests. A deploy is a PR that runs `tf plan`.
-
-The Hydra admin Service is ClusterIP-only and must never be exposed.
+`docker-compose.yml` is the **source of truth for the topology**; production is
+that same shape translated to jaritanet's Pulumi. This repo holds no cluster
+manifests by design. See [`DEPLOY.md`](DEPLOY.md) for the prod deltas (domains,
+TLS, admin-not-exposed, secrets from the backend, opaque tokens).
 
 ## ⚠️ Security review items (before this is internet-facing)
 
-These are deliberately stubbed/simplified in this first cut — see inline
-`SECURITY REVIEW` notes:
+These are deliberately stubbed/simplified in this first cut:
 
-- **JWT audience not enforced** (`src/auth/jwt.rs`). Pin a resource audience and
-  validate `aud`, or a token minted for another resource could be replayed.
+- **Access tokens are opaque + introspected** at Hydra (no JWT reaches any
+  client; tokens are revocable). Introspection is per-request — add a short TTL
+  cache if load warrants; note that caching trades away instant revocation.
 - **Hydra DCR / public client registration** must be explicitly configured for
   production (the compose file runs `--dev`, which is not safe for prod).
 - **Encryption key rotation** is not implemented — rotating `TOKEN_ENC_KEY`

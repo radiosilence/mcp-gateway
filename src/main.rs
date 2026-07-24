@@ -24,7 +24,6 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 use crate::auth::hydra::HydraAdmin;
-use crate::auth::jwks::JwksCache;
 use crate::config::Config;
 use crate::crypto::Cipher;
 use crate::state::AppState;
@@ -51,14 +50,12 @@ async fn main() -> Result<()> {
         .timeout(std::time::Duration::from_secs(15))
         .build()?;
 
-    let jwks = JwksCache::new(&config.hydra_public_url, http.clone());
     let hydra = HydraAdmin::new(&config.hydra_admin_url, http.clone());
 
     let state = AppState {
         config: Arc::new(config),
         store,
         http,
-        jwks,
         hydra,
     };
 

@@ -27,6 +27,12 @@ struct RedirectTo {
     redirect_to: String,
 }
 
+#[derive(Deserialize)]
+struct Introspection {
+    active: bool,
+    sub: Option<String>,
+}
+
 #[derive(Serialize)]
 struct AcceptLogin<'a> {
     subject: &'a str,
@@ -70,6 +76,25 @@ impl HydraAdmin {
             .json()
             .await?;
         Ok(resp.redirect_to)
+    }
+
+    /// Introspect an opaque access token. Returns the subject if the token is
+    /// active. This is how we resolve Claude's bearer token to a user without
+    /// JWTs — the token stays an opaque reference and can be revoked at Hydra.
+    pub async fn introspect(&self, token: &str) -> Result<Option<String>> {
+        let url = format!("{}/admin/oauth2/introspect", self.base);
+        let resp: Introspection = self
+            .http
+            .post(&url)
+            .form(&[("token", token)])
+            .send()
+            .await
+            .context("hydra introspect")?
+            .error_for_status()
+            .context("hydra introspect status")?
+            .json()
+            .await?;
+        Ok(if resp.active { resp.sub } else { None })
     }
 
     pub async fn get_consent(&self, consent_challenge: &str) -> Result<ConsentRequest> {

@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
 
     if config.github_allowlist.is_empty() {
         tracing::warn!(
-            "GITHUB_ALLOWED is empty — ANY GitHub user can authenticate. Set it \
+            "GH_ALLOWED is empty — ANY GitHub user can authenticate. Set it \
              to a comma-separated list of allowed logins before public deploy."
         );
     }

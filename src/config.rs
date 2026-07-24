@@ -78,9 +78,9 @@ impl Config {
             token_enc_key,
             hydra_issuer: env("HYDRA_ISSUER")?,
             hydra_admin_url: env("HYDRA_ADMIN_URL")?,
-            github_client_id: env("GITHUB_CLIENT_ID")?,
-            github_client_secret: env("GITHUB_CLIENT_SECRET")?,
-            github_allowlist: env_or("GITHUB_ALLOWED", "")
+            github_client_id: env("GH_CLIENT_ID")?,
+            github_client_secret: env("GH_CLIENT_SECRET")?,
+            github_allowlist: env_or("GH_ALLOWED", "")
                 .split(',')
                 .map(|s| s.trim().to_lowercase())
                 .filter(|s| !s.is_empty())

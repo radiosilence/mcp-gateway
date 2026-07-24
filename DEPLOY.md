@@ -39,7 +39,7 @@ Everything else stays as in compose. The deltas:
   and `SERVE_PUBLIC_CORS_ENABLED` as needed.
 - **Secrets from the secret backend** (SOPS/Vault/sealed-secrets), never inline:
   `POSTGRES_PASSWORD`, `DATABASE_URL`, Hydra `DSN`, `SECRETS_SYSTEM`,
-  `TOKEN_ENC_KEY` (32-byte base64), `GITHUB_CLIENT_ID/SECRET`. The
+  `TOKEN_ENC_KEY` (32-byte base64), `GH_CLIENT_ID/SECRET`. The
   `TOKEN_ENC_KEY` is the one that unlocks every stored Fastmail token — tightest
   RBAC, never in an image or in git.
 - **Access tokens stay opaque** (Hydra default; we introspect). Do not set

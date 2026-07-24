@@ -49,7 +49,7 @@ State is disposable: lose the DB and users just re-paste their keys.
 ```sh
 cp .env.example .env
 # create a GitHub OAuth app (callback http://localhost:8080/auth/github/callback)
-# and fill GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET; set a real TOKEN_ENC_KEY:
+# and fill GH_CLIENT_ID / GH_CLIENT_SECRET; set a real TOKEN_ENC_KEY:
 #   openssl rand -base64 32
 docker compose up --build
 ```

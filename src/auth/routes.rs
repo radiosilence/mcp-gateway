@@ -163,7 +163,7 @@ pub async fn github_callback(
     // the control that makes public DCR safe — a registered client is useless
     // without a token, and tokens only issue to allowlisted users.
     if !state.config.github_login_allowed(&login) {
-        tracing::warn!(%login, "rejected login: not in GITHUB_ALLOWED");
+        tracing::warn!(%login, "rejected login: not in GH_ALLOWED");
         return Err(AppError::Unauthorized);
     }
 

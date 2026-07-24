@@ -2,7 +2,7 @@
 # Add a custom connector in Claude pointing at http://localhost:8080/mcp and
 # the whole OAuth dance runs locally.
 #
-# Prereq: copy .env.example → .env and fill GITHUB_CLIENT_ID/SECRET (GitHub OAuth
+# Prereq: copy .env.example → .env and fill GH_CLIENT_ID/SECRET (GitHub OAuth
 # app with callback http://localhost:8080/auth/github/callback).
 
 services:

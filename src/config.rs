@@ -47,6 +47,10 @@ pub struct Config {
     /// GitHub OAuth app credentials (upstream identity).
     pub github_client_id: String,
     pub github_client_secret: String,
+    /// Allowlist of GitHub logins (lowercased) permitted to authenticate. Empty
+    /// = allow anyone (dev only). On a public deployment this MUST be set, or
+    /// anyone with a GitHub account can log in and store their own credentials.
+    pub github_allowlist: Vec<String>,
     /// Registry of backend MCPs this gateway fronts.
     pub mcps: Vec<Mcp>,
 }
@@ -76,8 +80,19 @@ impl Config {
             hydra_admin_url: env("HYDRA_ADMIN_URL")?,
             github_client_id: env("GITHUB_CLIENT_ID")?,
             github_client_secret: env("GITHUB_CLIENT_SECRET")?,
+            github_allowlist: env_or("GITHUB_ALLOWED", "")
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect(),
             mcps: load_registry(&env_or("MCP_REGISTRY", "mcps.json"))?,
         })
+    }
+
+    /// Whether a GitHub login may authenticate. Empty allowlist ⇒ anyone (dev).
+    pub fn github_login_allowed(&self, login: &str) -> bool {
+        self.github_allowlist.is_empty()
+            || self.github_allowlist.contains(&login.to_lowercase())
     }
 
     /// The GitHub OAuth callback URL registered with the GitHub app.

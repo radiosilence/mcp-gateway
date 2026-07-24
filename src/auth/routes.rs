@@ -159,6 +159,14 @@ pub async fn github_callback(
         .await
         .map_err(|e| AppError::Upstream(e.to_string()))?;
 
+    // Identity gate: only allowlisted GitHub logins may authenticate. This is
+    // the control that makes public DCR safe — a registered client is useless
+    // without a token, and tokens only issue to allowlisted users.
+    if !state.config.github_login_allowed(&login) {
+        tracing::warn!(%login, "rejected login: not in GITHUB_ALLOWED");
+        return Err(AppError::Unauthorized);
+    }
+
     match flow.login_challenge {
         // Servicing a Hydra login: tell Hydra who this is.
         Some(lc) => {

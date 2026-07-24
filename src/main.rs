@@ -42,6 +42,13 @@ async fn main() -> Result<()> {
     let config = Config::from_env()?;
     let bind_addr = config.bind_addr.clone();
 
+    if config.github_allowlist.is_empty() {
+        tracing::warn!(
+            "GITHUB_ALLOWED is empty — ANY GitHub user can authenticate. Set it \
+             to a comma-separated list of allowed logins before public deploy."
+        );
+    }
+
     let cipher = Cipher::new(&config.token_enc_key)?;
     let store = Store::connect(&config.database_url, cipher).await?;
     store.migrate().await?;

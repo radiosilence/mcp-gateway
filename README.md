@@ -59,11 +59,14 @@ Claude's connector is fetched by Anthropic's servers, not your machine, so
 `localhost` is unreachable — and **both** the service and Hydra must be public
 (Claude talks to each directly). One tunnel, two hostnames does it:
 
-1. In **Cloudflare Zero Trust → Tunnels**, create a tunnel and add two public
-   hostnames pointing at the in-network targets:
-   - `fastmail-dev.<your-domain>` → `http://service:8080`
-   - `auth-dev.<your-domain>` → `http://hydra:4444`
-2. Copy the tunnel token into `.env` as `TUNNEL_TOKEN`, and set:
+1. Provision the tunnel (creates it + DNS, writes `cloudflared/` — needs
+   `cloudflared` logged in on your host, `cloudflared tunnel login`):
+   ```sh
+   FASTMAIL_HOST=fastmail-dev.<your-domain> \
+   AUTH_HOST=auth-dev.<your-domain> \
+   scripts/provision-tunnel.sh
+   ```
+2. In `.env` set the tunnel hostnames:
    - `PUBLIC_URL=https://fastmail-dev.<your-domain>`
    - `HYDRA_ISSUER=https://auth-dev.<your-domain>`
 3. Update the GitHub OAuth app's callback to
@@ -71,8 +74,10 @@ Claude's connector is fetched by Anthropic's servers, not your machine, so
 4. `docker compose --profile tunnel up`
 5. Add `https://fastmail-dev.<your-domain>/mcp` as a custom connector in Claude.
 
-The service and Hydra stay plain HTTP inside the compose network; Cloudflare
-terminates TLS at the edge (the same role Traefik plays in production).
+Login (`cert.pem`) is only needed on the host for provisioning; the container
+authenticates the *run* with the per-tunnel `creds.json` the script stages. The
+service and Hydra stay plain HTTP inside the compose network — Cloudflare
+terminates TLS at the edge (the role Traefik plays in production).
 
 ## Configuration
 

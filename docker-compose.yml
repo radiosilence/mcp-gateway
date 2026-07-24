@@ -80,16 +80,16 @@ services:
 
   # Opt-in (`docker compose --profile tunnel up`): exposes the service + Hydra
   # publicly so the Claude connector flow works from Anthropic's servers.
-  # Configure ONE tunnel with TWO public hostnames in the Cloudflare Zero Trust
-  # dashboard, pointing at the in-network targets:
-  #   <fastmail host>  ->  http://service:8080
-  #   <auth host>      ->  http://hydra:4444
-  # then paste the tunnel token into .env as TUNNEL_TOKEN. See README.
+  # Run `scripts/provision-tunnel.sh` first — it creates the named tunnel, cuts
+  # the DNS records, and writes cloudflared/{config.yml,creds.json} (gitignored)
+  # that this service mounts. One tunnel, two hostnames → service:8080 + hydra:4444.
   cloudflared:
     image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:-}
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
     profiles: ["tunnel"]
     restart: unless-stopped
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
     depends_on:
       - service
       - hydra

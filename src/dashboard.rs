@@ -21,6 +21,7 @@ struct McpView {
     has_credential: bool,
     updated_at: String,
     connector_url: String,
+    claude_code_cmd: String,
     key_help_url: String,
     key_hint: String,
 }
@@ -80,12 +81,17 @@ pub async fn dashboard(
             Some(meta) => (true, meta.updated_at.to_string()),
             None => (false, String::new()),
         };
+        let connector_url = format!("{base}/{}", m.id);
         mcps.push(McpView {
+            claude_code_cmd: format!(
+                "claude mcp add --transport http --scope user {} {}",
+                m.id, connector_url
+            ),
             id: m.id.clone(),
             name: m.name.clone(),
             has_credential,
             updated_at,
-            connector_url: format!("{base}/{}", m.id),
+            connector_url,
             key_help_url: m.key_help_url.clone().unwrap_or_default(),
             key_hint: m.key_hint.clone().unwrap_or_else(|| "paste key…".into()),
         });

@@ -1,10 +1,10 @@
-//! Persistence: the `sub → encrypted Fastmail token` mapping.
+//! Persistence: the `(sub, mcp) → encrypted credential set` mapping.
 //!
-//! This is the only genuinely sensitive state the service holds. Tokens are
-//! encrypted (see [`crate::crypto`]) before they ever touch a row, so the plain
-//! token exists only in memory while a request is in flight. State is
-//! deliberately disposable — losing the DB just means users re-paste their
-//! token.
+//! This is the only genuinely sensitive state the service holds. Credentials
+//! are encrypted (see [`crate::crypto`]) before they ever touch a row, so the
+//! plaintext exists only in memory while a request is in flight. State is
+//! deliberately disposable — losing the DB just means users re-enter their
+//! credentials.
 
 use anyhow::Result;
 use base64::Engine;
@@ -45,6 +45,30 @@ pub struct TokenMeta {
     pub updated_at: time::OffsetDateTime,
 }
 
+/// A user's values for one MCP, keyed by [`crate::config::CredentialField::id`].
+/// Ordered so the encrypted blob is stable across saves of the same values.
+pub type CredentialSet = std::collections::BTreeMap<String, String>;
+
+/// Serialise a credential set for encryption. Always JSON, so a set of any
+/// size round-trips through the single `enc_secret` column — no schema change
+/// was needed to go from one secret per MCP to several.
+fn encode_secret(values: &CredentialSet) -> String {
+    serde_json::to_string(values).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Parse a decrypted blob back into a credential set.
+///
+/// Rows written before multi-field support hold a bare secret rather than a
+/// JSON object; those decode onto `primary_field`, so existing Fastmail tokens
+/// keep working untouched. A stored value that happens to be a JSON object of
+/// strings would be misread, which no API token in practice is.
+fn decode_secret(plain: &str, primary_field: &str) -> CredentialSet {
+    match serde_json::from_str::<CredentialSet>(plain) {
+        Ok(values) => values,
+        Err(_) => CredentialSet::from([(primary_field.to_string(), plain.to_string())]),
+    }
+}
+
 impl Store {
     pub async fn connect(database_url: &str, cipher: Cipher) -> Result<Self> {
         let pool = PgPoolOptions::new()
@@ -60,8 +84,16 @@ impl Store {
         Ok(())
     }
 
-    /// Fetch and decrypt a user's credential for a given MCP, if stored.
-    pub async fn get_credential(&self, sub: &str, mcp_id: &str) -> Result<Option<String>> {
+    /// Fetch and decrypt a user's credential set for a given MCP.
+    ///
+    /// `primary_field` names the field a legacy single-secret row maps onto —
+    /// see [`decode_secret`].
+    pub async fn get_credentials(
+        &self,
+        sub: &str,
+        mcp_id: &str,
+        primary_field: &str,
+    ) -> Result<Option<CredentialSet>> {
         let row = sqlx::query("SELECT enc_secret FROM credentials WHERE sub = $1 AND mcp_id = $2")
             .bind(sub)
             .bind(mcp_id)
@@ -70,15 +102,22 @@ impl Store {
         match row {
             Some(row) => {
                 let sealed: String = row.get("enc_secret");
-                Ok(Some(self.cipher.open(&sealed)?))
+                let plain = self.cipher.open(&sealed)?;
+                Ok(Some(decode_secret(&plain, primary_field)))
             }
             None => Ok(None),
         }
     }
 
-    /// Encrypt and upsert a user's credential for an MCP.
-    pub async fn set_credential(&self, sub: &str, mcp_id: &str, secret: &str) -> Result<()> {
-        let sealed = self.cipher.seal(secret)?;
+    /// Encrypt and upsert a user's credential set for an MCP.
+    pub async fn set_credentials(
+        &self,
+        sub: &str,
+        mcp_id: &str,
+        values: &CredentialSet,
+    ) -> Result<()> {
+        let secret = encode_secret(values);
+        let sealed = self.cipher.seal(&secret)?;
         sqlx::query(
             "INSERT INTO credentials (sub, mcp_id, enc_secret, updated_at)
              VALUES ($1, $2, $3, now())
@@ -183,5 +222,56 @@ impl Store {
             csrf: row.get("csrf"),
             login_challenge: row.get("login_challenge"),
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credential_sets_round_trip() {
+        let values = CredentialSet::from([
+            ("username".to_string(), "me@icloud.com".to_string()),
+            ("password".to_string(), "abcd-efgh".to_string()),
+        ]);
+        assert_eq!(decode_secret(&encode_secret(&values), "username"), values);
+    }
+
+    #[test]
+    fn legacy_bare_secrets_decode_onto_the_primary_field() {
+        let decoded = decode_secret("fmu1-abc123", "token");
+        assert_eq!(
+            decoded.get("token").map(String::as_str),
+            Some("fmu1-abc123")
+        );
+        assert_eq!(decoded.len(), 1);
+    }
+
+    #[test]
+    fn legacy_secrets_that_look_like_json_scalars_still_decode_as_secrets() {
+        // Only a JSON *object of strings* is treated as a credential set.
+        for raw in ["12345", "[\"a\"]", "\"quoted\"", "{\"a\": 1}"] {
+            let decoded = decode_secret(raw, "token");
+            assert_eq!(decoded.get("token").map(String::as_str), Some(raw));
+        }
+    }
+
+    #[test]
+    fn encoding_is_stable_for_the_same_values() {
+        let a = CredentialSet::from([
+            ("b".to_string(), "2".to_string()),
+            ("a".to_string(), "1".to_string()),
+        ]);
+        let b = CredentialSet::from([
+            ("a".to_string(), "1".to_string()),
+            ("b".to_string(), "2".to_string()),
+        ]);
+        assert_eq!(encode_secret(&a), encode_secret(&b));
+    }
+
+    #[test]
+    fn empty_sets_round_trip_to_empty() {
+        assert!(decode_secret(&encode_secret(&CredentialSet::new()), "token").is_empty());
     }
 }

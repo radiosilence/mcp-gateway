@@ -1,5 +1,9 @@
-//! Dashboard: log in with our OAuth (GitHub upstream), then manage a credential
-//! per registered MCP. Post-Redirect-Get with a `flash` query param.
+//! Dashboard: log in with our OAuth (GitHub upstream), then manage the
+//! credentials for each registered MCP. An MCP declares the fields it needs
+//! (one for a bearer token, three for CalDAV), and the form is built from
+//! those. Post-Redirect-Get with a `flash` query param.
+
+use std::collections::HashMap;
 
 use askama::Template;
 use axum::extract::{Form, Path, Query, State};
@@ -10,10 +14,24 @@ use serde::Deserialize;
 use crate::auth::routes::current_session;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
+use crate::store::CredentialSet;
 
 #[derive(Template)]
 #[template(path = "index.html")]
 struct IndexTemplate;
+
+/// One input in an MCP's credential form.
+struct FieldView {
+    id: String,
+    label: String,
+    /// `password` or `text` — secrets are never rendered back into the page.
+    input_type: String,
+    placeholder: String,
+    /// Prefilled value: a configured default, or the stored value when the
+    /// field is not a secret (so a server URL can be edited, not retyped).
+    value: String,
+    required: bool,
+}
 
 struct McpView {
     id: String,
@@ -23,7 +41,7 @@ struct McpView {
     connector_url: String,
     claude_code_cmd: String,
     key_help_url: String,
-    key_hint: String,
+    fields: Vec<FieldView>,
 }
 
 #[derive(Template)]
@@ -40,10 +58,10 @@ pub struct FlashQuery {
     flash: String,
 }
 
+/// The credential form posts one input per configured field, so the shape
+/// isn't known at compile time.
 #[derive(Deserialize)]
-pub struct TokenForm {
-    token: String,
-}
+pub struct CredentialForm(HashMap<String, String>);
 
 fn flash_redirect(msg: &str) -> Response {
     let enc: String = url::form_urlencoded::byte_serialize(msg.as_bytes()).collect();
@@ -81,6 +99,44 @@ pub async fn dashboard(
             Some(meta) => (true, meta.updated_at.to_string()),
             None => (false, String::new()),
         };
+
+        // Non-secret values are read back so they can be edited in place;
+        // secrets are never decrypted for rendering.
+        let stored = if has_credential && m.fields.iter().any(|f| !f.secret) {
+            state
+                .store
+                .get_credentials(&session.sub, &m.id, m.primary_field())
+                .await
+                .map_err(AppError::Internal)?
+        } else {
+            None
+        };
+
+        let fields = m
+            .fields
+            .iter()
+            .map(|f| FieldView {
+                value: match f.secret {
+                    true => String::new(),
+                    false => stored
+                        .as_ref()
+                        .and_then(|s| s.get(&f.id))
+                        .cloned()
+                        .or_else(|| f.default.clone())
+                        .unwrap_or_default(),
+                },
+                input_type: if f.secret { "password" } else { "text" }.to_string(),
+                placeholder: f
+                    .hint
+                    .clone()
+                    .or_else(|| f.default.clone())
+                    .unwrap_or_else(|| f.label.to_lowercase()),
+                id: f.id.clone(),
+                label: f.label.clone(),
+                required: f.required,
+            })
+            .collect();
+
         let connector_url = format!("{base}/{}", m.id);
         mcps.push(McpView {
             claude_code_cmd: format!(
@@ -93,7 +149,7 @@ pub async fn dashboard(
             updated_at,
             connector_url,
             key_help_url: m.key_help_url.clone().unwrap_or_default(),
-            key_hint: m.key_hint.clone().unwrap_or_else(|| "paste key…".into()),
+            fields,
         });
     }
 
@@ -110,24 +166,51 @@ pub async fn set_credential(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(mcp_id): Path<String>,
-    Form(f): Form<TokenForm>,
+    Form(form): Form<CredentialForm>,
 ) -> AppResult<Response> {
     let Some(session) = current_session(&state, &headers).await else {
         return Ok(Redirect::to("/login").into_response());
     };
-    if state.config.mcp(&mcp_id).is_none() {
+    let Some(mcp) = state.config.mcp(&mcp_id) else {
         return Err(AppError::BadRequest("unknown mcp".into()));
+    };
+
+    let mut values = CredentialSet::new();
+    for field in &mcp.fields {
+        let raw = form.0.get(&field.id).map(String::as_str).unwrap_or("");
+        let value = raw.trim();
+        if value.is_empty() {
+            // An optional field left blank falls back to the configured
+            // default, if there is one, and is otherwise simply not stored.
+            match (field.required, field.default.as_deref()) {
+                (true, _) => {
+                    return Ok(flash_redirect(&format!("{} cannot be empty", field.label)));
+                }
+                (false, Some(default)) => {
+                    values.insert(field.id.clone(), default.to_string());
+                }
+                (false, None) => {}
+            }
+            continue;
+        }
+        // These become header values downstream. Reject control characters
+        // here, where we can tell the user, rather than dropping them silently
+        // at proxy time.
+        if value.chars().any(|c| c.is_control()) {
+            return Ok(flash_redirect(&format!(
+                "{} contains characters that can't be sent",
+                field.label
+            )));
+        }
+        values.insert(field.id.clone(), value.to_string());
     }
-    let token = f.token.trim();
-    if token.is_empty() {
-        return Ok(flash_redirect("Key cannot be empty"));
-    }
+
     state
         .store
-        .set_credential(&session.sub, &mcp_id, token)
+        .set_credentials(&session.sub, &mcp_id, &values)
         .await
         .map_err(AppError::Internal)?;
-    Ok(flash_redirect("Key saved"))
+    Ok(flash_redirect("Credentials saved"))
 }
 
 pub async fn delete_credential(
@@ -143,5 +226,5 @@ pub async fn delete_credential(
         .delete_credential(&session.sub, &mcp_id)
         .await
         .map_err(AppError::Internal)?;
-    Ok(flash_redirect("Key deleted"))
+    Ok(flash_redirect("Credentials deleted"))
 }

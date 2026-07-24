@@ -95,6 +95,8 @@ services:
         condition: service_started
       fastmail-mcp:
         condition: service_started
+      caldav-mcp:
+        condition: service_started
 
   # A backend MCP: fastmail-cli in HTTP mode. The gateway proxies /mcp/fastmail
   # here and injects X-Fastmail-Token. Internal only — no host port.
@@ -102,6 +104,18 @@ services:
     build:
       context: .
       dockerfile: deploy/fastmail-mcp.Dockerfile
+    command: ["mcp", "--http", "0.0.0.0:8080"]
+    expose:
+      - "8080"
+
+  # A backend MCP: caldav-cli in HTTP mode. The gateway proxies /caldav here and
+  # injects X-CalDAV-Username/-Password/-Url. CalDAV needs three values rather
+  # than one bearer token, which is why the registry entry uses `fields`.
+  # Internal only — no host port.
+  caldav-mcp:
+    build:
+      context: .
+      dockerfile: deploy/caldav-mcp.Dockerfile
     command: ["mcp", "--http", "0.0.0.0:8080"]
     expose:
       - "8080"

@@ -7,6 +7,40 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+/// One value a backend MCP needs from the user.
+///
+/// Most MCPs want a single bearer token, but not all: CalDAV authenticates
+/// with a username *and* an app password, against a server URL that varies by
+/// provider. So a credential is a set of named fields, each injected into its
+/// own header.
+#[derive(Clone, Debug, Deserialize)]
+pub struct CredentialField {
+    /// Form field name and storage key, e.g. `"username"`.
+    pub id: String,
+    /// Label shown in the dashboard.
+    pub label: String,
+    /// Header the backend expects this value in, e.g. `X-CalDAV-Username`.
+    pub header: String,
+    /// Render as a password input and never echo the stored value back.
+    /// Non-secret fields (a server URL) are shown so they can be edited.
+    #[serde(default = "default_true")]
+    pub secret: bool,
+    /// Prefilled value — for a field with a sensible provider default.
+    #[serde(default)]
+    pub default: Option<String>,
+    /// Placeholder text for the input.
+    #[serde(default)]
+    pub hint: Option<String>,
+    /// Whether the user must fill this in. An optional field left blank is
+    /// simply not stored, and the backend applies its own default.
+    #[serde(default = "default_true")]
+    pub required: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// A backend MCP the gateway fronts. Registry is loaded from a JSON file
 /// (`MCP_REGISTRY`, default `mcps.json`), so adding an MCP is config, not code.
 #[derive(Clone, Debug, Deserialize)]
@@ -17,14 +51,31 @@ pub struct Mcp {
     pub name: String,
     /// Backend MCP endpoint to proxy to, e.g. `http://fastmail-mcp:8080/mcp`.
     pub backend: String,
-    /// Header the backend expects the per-user secret in, e.g. `X-Fastmail-Token`.
-    pub credential_header: String,
+    /// Shorthand for the single-secret case: one header, no `fields` block.
+    /// Normalised into a one-entry `fields` at load, so nothing downstream has
+    /// to know which form the registry used.
+    #[serde(default)]
+    credential_header: Option<String>,
+    /// The values this MCP needs. Always non-empty after loading.
+    #[serde(default)]
+    pub fields: Vec<CredentialField>,
     /// Optional link shown in the dashboard for where to get the key.
     #[serde(default)]
     pub key_help_url: Option<String>,
-    /// Optional hint text for the key input.
+    /// Optional hint text, used as the placeholder in the single-secret form.
     #[serde(default)]
     pub key_hint: Option<String>,
+}
+
+impl Mcp {
+    /// The storage key of the first field — where a legacy single-secret row
+    /// (a bare string rather than a JSON object) is mapped on read.
+    pub fn primary_field(&self) -> &str {
+        self.fields
+            .first()
+            .map(|f| f.id.as_str())
+            .unwrap_or("token")
+    }
 }
 
 #[derive(Clone)]
@@ -124,19 +175,66 @@ fn load_registry(path: &str) -> Result<Vec<Mcp>> {
         std::fs::read_to_string(path).with_context(|| format!("reading MCP registry at {path}"))?;
     let mcps: Vec<Mcp> =
         serde_json::from_str(&raw).with_context(|| format!("parsing MCP registry at {path}"))?;
-    for m in &mcps {
+    mcps.into_iter().map(normalize).collect()
+}
+
+/// Validate one registry entry and expand the `credential_header` shorthand
+/// into the general `fields` form.
+fn normalize(mut m: Mcp) -> Result<Mcp> {
+    anyhow::ensure!(
+        !m.id.is_empty() && !m.id.contains('/'),
+        "invalid MCP id {:?}: must be a non-empty single path segment",
+        m.id
+    );
+    anyhow::ensure!(
+        !RESERVED_IDS.contains(&m.id.as_str()),
+        "MCP id {:?} is reserved (shadows a gateway route)",
+        m.id
+    );
+
+    if m.fields.is_empty() {
+        let header = m.credential_header.clone().with_context(|| {
+            format!(
+                "MCP {:?} defines neither `credential_header` nor `fields`",
+                m.id
+            )
+        })?;
+        m.fields = vec![CredentialField {
+            id: "token".into(),
+            label: "API key".into(),
+            header,
+            secret: true,
+            default: None,
+            hint: m.key_hint.clone(),
+            required: true,
+        }];
+    } else {
         anyhow::ensure!(
-            !m.id.is_empty() && !m.id.contains('/'),
-            "invalid MCP id {:?}: must be a non-empty single path segment",
-            m.id
-        );
-        anyhow::ensure!(
-            !RESERVED_IDS.contains(&m.id.as_str()),
-            "MCP id {:?} is reserved (shadows a gateway route)",
+            m.credential_header.is_none(),
+            "MCP {:?} sets both `credential_header` and `fields` — use one or the other",
             m.id
         );
     }
-    Ok(mcps)
+
+    let mut seen = std::collections::HashSet::new();
+    for f in &m.fields {
+        anyhow::ensure!(
+            !f.id.is_empty() && seen.insert(f.id.as_str()),
+            "MCP {:?} has an empty or duplicated field id {:?}",
+            m.id,
+            f.id
+        );
+        // A header name with a space or newline in it would be rejected at
+        // request time, deep inside the proxy. Catch it at boot instead.
+        anyhow::ensure!(
+            !f.header.is_empty() && f.header.bytes().all(|b| b.is_ascii_graphic() && b != b':'),
+            "MCP {:?} field {:?} has an invalid header name {:?}",
+            m.id,
+            f.id,
+            f.header
+        );
+    }
+    Ok(m)
 }
 
 fn env(key: &str) -> Result<String> {
@@ -145,4 +243,134 @@ fn env(key: &str) -> Result<String> {
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(json: &str) -> Result<Vec<Mcp>> {
+        serde_json::from_str::<Vec<Mcp>>(json)?
+            .into_iter()
+            .map(normalize)
+            .collect()
+    }
+
+    #[test]
+    fn single_secret_shorthand_expands_to_one_field() {
+        let mcps = parse(
+            r#"[{"id":"fastmail","name":"Fastmail","backend":"http://x/mcp",
+                 "credential_header":"X-Fastmail-Token","key_hint":"fmu1-…"}]"#,
+        )
+        .unwrap();
+        let fields = &mcps[0].fields;
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].id, "token");
+        assert_eq!(fields[0].header, "X-Fastmail-Token");
+        assert!(fields[0].secret);
+        assert!(fields[0].required);
+        // The legacy key_hint becomes the field's placeholder.
+        assert_eq!(fields[0].hint.as_deref(), Some("fmu1-…"));
+        assert_eq!(mcps[0].primary_field(), "token");
+    }
+
+    #[test]
+    fn multi_field_registry_entries_load_as_written() {
+        let mcps = parse(
+            r#"[{"id":"caldav","name":"Calendar","backend":"http://x/mcp","fields":[
+                 {"id":"username","label":"Apple ID","header":"X-CalDAV-Username","secret":false},
+                 {"id":"password","label":"App password","header":"X-CalDAV-Password"},
+                 {"id":"url","label":"Server","header":"X-CalDAV-Url","secret":false,
+                  "default":"https://caldav.icloud.com","required":false}]}]"#,
+        )
+        .unwrap();
+        let fields = &mcps[0].fields;
+        assert_eq!(fields.len(), 3);
+        assert!(!fields[0].secret);
+        // `secret` defaults to true when omitted.
+        assert!(fields[1].secret);
+        assert_eq!(
+            fields[2].default.as_deref(),
+            Some("https://caldav.icloud.com")
+        );
+        assert!(!fields[2].required);
+        assert_eq!(mcps[0].primary_field(), "username");
+    }
+
+    #[test]
+    fn rejects_an_mcp_with_no_credential_definition() {
+        let err = parse(r#"[{"id":"x","name":"X","backend":"http://x/mcp"}]"#).unwrap_err();
+        assert!(err.to_string().contains("neither"));
+    }
+
+    #[test]
+    fn rejects_mixing_both_credential_forms() {
+        let err = parse(
+            r#"[{"id":"x","name":"X","backend":"http://x/mcp","credential_header":"X-A",
+                 "fields":[{"id":"a","label":"A","header":"X-A"}]}]"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("one or the other"));
+    }
+
+    #[test]
+    fn rejects_duplicate_field_ids() {
+        let err = parse(
+            r#"[{"id":"x","name":"X","backend":"http://x/mcp","fields":[
+                 {"id":"a","label":"A","header":"X-A"},
+                 {"id":"a","label":"B","header":"X-B"}]}]"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("duplicated field id"));
+    }
+
+    #[test]
+    fn rejects_header_names_that_could_not_be_sent() {
+        for header in ["X Bad", "X-Bad\nInjected", "", "X-Bad:"] {
+            let json = format!(
+                r#"[{{"id":"x","name":"X","backend":"http://x/mcp","fields":[
+                     {{"id":"a","label":"A","header":{}}}]}}]"#,
+                serde_json::to_string(header).unwrap()
+            );
+            assert!(parse(&json).is_err(), "accepted bad header {header:?}");
+        }
+    }
+
+    /// Guards the registry that actually ships — a typo here breaks boot.
+    #[test]
+    fn the_shipped_registry_loads() {
+        let mcps = load_registry("mcps.json").expect("mcps.json must load");
+        let ids: Vec<&str> = mcps.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"fastmail"), "got {ids:?}");
+        assert!(ids.contains(&"caldav"), "got {ids:?}");
+
+        let caldav = mcps.iter().find(|m| m.id == "caldav").unwrap();
+        let headers: Vec<&str> = caldav.fields.iter().map(|f| f.header.as_str()).collect();
+        assert_eq!(
+            headers,
+            ["X-CalDAV-Username", "X-CalDAV-Password", "X-CalDAV-Url"]
+        );
+        // Only the password is a secret; the username and server URL are
+        // shown in the dashboard so they can be edited in place.
+        assert_eq!(
+            caldav.fields.iter().filter(|f| f.secret).count(),
+            1,
+            "exactly one CalDAV field should be a secret"
+        );
+        // The server URL is optional and defaults to iCloud.
+        let url = caldav.fields.iter().find(|f| f.id == "url").unwrap();
+        assert!(!url.required);
+        assert_eq!(url.default.as_deref(), Some("https://caldav.icloud.com"));
+    }
+
+    #[test]
+    fn rejects_reserved_and_malformed_ids() {
+        for id in ["dashboard", "healthz", "a/b", ""] {
+            let json = format!(
+                r#"[{{"id":{},"name":"X","backend":"http://x/mcp","credential_header":"X-A"}}]"#,
+                serde_json::to_string(id).unwrap()
+            );
+            assert!(parse(&json).is_err(), "accepted bad id {id:?}");
+        }
+    }
 }

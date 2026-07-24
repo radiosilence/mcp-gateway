@@ -60,6 +60,8 @@ echo "== protected-resource (gateway) =="
 curl -fsS "https://$GATEWAY_HOST/.well-known/oauth-protected-resource" | jq .
 echo "== /fastmail (expect 401) =="
 curl -s -o /dev/null -w "%{http_code}\\n" -X POST "https://$GATEWAY_HOST/fastmail" -H 'content-type: application/json' -d '{}'
+echo "== /caldav (expect 401) =="
+curl -s -o /dev/null -w "%{http_code}\\n" -X POST "https://$GATEWAY_HOST/caldav" -H 'content-type: application/json' -d '{}'
 echo "== openid-configuration (hydra) =="
 curl -fsS "https://$AUTH_HOST/.well-known/openid-configuration" | jq '{issuer,registration_endpoint,token_endpoint,jwks_uri}'
 """

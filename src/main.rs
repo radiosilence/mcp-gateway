@@ -1,9 +1,9 @@
-//! Hosted, OAuth-fronted MCP server for Fastmail.
+//! Hosted, OAuth-fronted gateway for self-hosted MCP servers.
 //!
 //! One axum process that is, in Model A terms, the whole service: it terminates
-//! the user's OAuth session (via Hydra), stores their Fastmail token encrypted,
-//! serves a dashboard to manage it, and mounts the `fastmail-cli` MCP over
-//! streamable HTTP with the token injected per request.
+//! the user's OAuth session (via Hydra), stores their per-MCP credentials
+//! encrypted, serves a dashboard to manage them, and proxies to each backend
+//! MCP with the right values injected per request.
 
 mod auth;
 mod config;

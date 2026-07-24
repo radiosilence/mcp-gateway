@@ -59,25 +59,24 @@ Claude's connector is fetched by Anthropic's servers, not your machine, so
 `localhost` is unreachable — and **both** the service and Hydra must be public
 (Claude talks to each directly). One tunnel, two hostnames does it:
 
-1. Provision the tunnel (creates it + DNS, writes `cloudflared/` — needs
-   `cloudflared` logged in on your host, `cloudflared tunnel login`):
-   ```sh
-   FASTMAIL_HOST=fastmail-dev.<your-domain> \
-   AUTH_HOST=auth-dev.<your-domain> \
-   scripts/provision-tunnel.sh
-   ```
-2. In `.env` set the tunnel hostnames:
-   - `PUBLIC_URL=https://fastmail-dev.<your-domain>`
-   - `HYDRA_ISSUER=https://auth-dev.<your-domain>`
-3. Update the GitHub OAuth app's callback to
-   `https://fastmail-dev.<your-domain>/auth/github/callback`.
-4. `docker compose --profile tunnel up`
-5. Add `https://fastmail-dev.<your-domain>/mcp` as a custom connector in Claude.
+Hostnames default to `fastmail-dev.radiosilence.dev` / `auth-dev.radiosilence.dev`
+(set `FASTMAIL_HOST` / `AUTH_HOST` in `mise.toml` or per-invocation for your own
+domain). Then:
 
-Login (`cert.pem`) is only needed on the host for provisioning; the container
-authenticates the *run* with the per-tunnel `creds.json` the script stages. The
-service and Hydra stay plain HTTP inside the compose network — Cloudflare
-terminates TLS at the edge (the role Traefik plays in production).
+1. Point the GitHub OAuth app's callback at
+   `https://<FASTMAIL_HOST>/auth/github/callback`.
+2. `mise run tunnel` — provisions the tunnel + DNS (one-time browser
+   `cloudflared tunnel login` if not already), writes `cloudflared/`, and brings
+   the stack up with the tunnel URLs wired in automatically.
+3. `mise run verify` — checks the OAuth discovery chain over the tunnel.
+4. Add `https://<FASTMAIL_HOST>/mcp` as a custom connector in Claude.
+
+Host login (`cert.pem`) is only for provisioning; the container authenticates
+the *run* with the per-tunnel `creds.json`. The service and Hydra stay plain
+HTTP inside the compose network — Cloudflare terminates TLS at the edge (the
+role Traefik plays in production).
+
+Local (no tunnel): `mise run up` → `http://localhost:8080`.
 
 ## Configuration
 

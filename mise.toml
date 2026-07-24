@@ -1,0 +1,63 @@
+[tools]
+# Deps for the dev tasks below. (If `cloudflared` doesn't resolve, use
+# "aqua:cloudflare/cloudflared".)
+cloudflared = "latest"
+jq = "latest"
+
+[env]
+# Dev-tunnel hostnames — must be on a domain you have on Cloudflare. Override
+# per-invocation: `FASTMAIL_HOST=… AUTH_HOST=… mise run tunnel`.
+FASTMAIL_HOST = "fastmail-dev.radiosilence.dev"
+AUTH_HOST = "auth-dev.radiosilence.dev"
+TUNNEL_NAME = "fastmail-mcp-dev"
+
+[tasks.up]
+description = "Run the stack locally on http://localhost:8080"
+run = "docker compose up --build"
+
+[tasks.down]
+description = "Stop and remove the stack"
+run = "docker compose down"
+
+[tasks.logs]
+description = "Tail all logs"
+run = "docker compose logs -f"
+
+[tasks.tunnel]
+description = "Provision the Cloudflare tunnel (idempotent) and run behind it"
+run = """
+set -eu
+mkdir -p cloudflared
+[ -f "$HOME/.cloudflared/cert.pem" ] || cloudflared tunnel login
+cloudflared tunnel list --output json | jq -e --arg n "$TUNNEL_NAME" '.[]|select(.name==$n)' >/dev/null || cloudflared tunnel create "$TUNNEL_NAME"
+UUID=$(cloudflared tunnel list --output json | jq -r --arg n "$TUNNEL_NAME" '.[]|select(.name==$n)|.id')
+cloudflared tunnel route dns "$TUNNEL_NAME" "$FASTMAIL_HOST" || true
+cloudflared tunnel route dns "$TUNNEL_NAME" "$AUTH_HOST" || true
+cp "$HOME/.cloudflared/$UUID.json" cloudflared/creds.json
+cat > cloudflared/config.yml <<CFG
+tunnel: $UUID
+credentials-file: /etc/cloudflared/creds.json
+ingress:
+  - hostname: $FASTMAIL_HOST
+    service: http://service:8080
+  - hostname: $AUTH_HOST
+    service: http://hydra:4444
+  - service: http_status:404
+CFG
+echo ">> GitHub OAuth app callback must be: https://$FASTMAIL_HOST/auth/github/callback"
+export PUBLIC_URL="https://$FASTMAIL_HOST"
+export HYDRA_ISSUER="https://$AUTH_HOST"
+docker compose --profile tunnel up --build
+"""
+
+[tasks.verify]
+description = "Check the OAuth discovery chain over the tunnel"
+run = """
+set -e
+echo "== protected-resource (service) =="
+curl -fsS "https://$FASTMAIL_HOST/.well-known/oauth-protected-resource" | jq .
+echo "== /mcp (expect 401) =="
+curl -s -o /dev/null -w "%{http_code}\\n" "https://$FASTMAIL_HOST/mcp"
+echo "== authorization-server (hydra) =="
+curl -fsS "https://$AUTH_HOST/.well-known/oauth-authorization-server" | jq '{issuer,registration_endpoint,token_endpoint,jwks_uri}'
+"""

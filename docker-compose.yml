@@ -78,11 +78,11 @@ services:
       hydra:
         condition: service_started
 
-  # Opt-in (`docker compose --profile tunnel up`): exposes the service + Hydra
-  # publicly so the Claude connector flow works from Anthropic's servers.
-  # Run `scripts/provision-tunnel.sh` first — it creates the named tunnel, cuts
-  # the DNS records, and writes cloudflared/{config.yml,creds.json} (gitignored)
-  # that this service mounts. One tunnel, two hostnames → service:8080 + hydra:4444.
+  # Opt-in tunnel for Claude-connector testing. Don't run this directly — use
+  # `mise run tunnel`, which provisions the tunnel + DNS, writes
+  # cloudflared/{config.yml,creds.json} (gitignored, mounted below), and brings
+  # the stack up with the right public URLs. One tunnel, two hostnames →
+  # service:8080 + hydra:4444.
   cloudflared:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run

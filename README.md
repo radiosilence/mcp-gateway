@@ -1,44 +1,48 @@
-# fastmail-mcp-service
+# mcp-gateway
 
-Hosted, OAuth-fronted MCP server for Fastmail. Lets you add Fastmail to Claude
-(Desktop / mobile / web) as a custom connector, without Fastmail OAuth.
+> Repo is still named `fastmail-mcp-service` (Fastmail was the first backend);
+> the code is now a generic gateway. Rename happens when it folds into jaritanet.
 
-It wraps [`fastmail-cli`](https://github.com/radiosilence/fastmail-cli)'s MCP
-server (linked as a library), puts an OAuth layer in front, and maps each
-authenticated user to their own encrypted Fastmail API token.
+An OAuth-fronted gateway for self-hosted MCP servers. Add any of your MCPs to
+Claude (Desktop / mobile / web) as custom connectors without each one needing
+its own OAuth — the gateway authenticates the user once and injects each MCP's
+credential.
 
 ## Why this exists
 
-`fastmail-cli mcp` is single-tenant: one token, local stdio. Claude's remote
-connectors require an OAuth-authenticated HTTPS endpoint. Fastmail has no OAuth
-for third-party apps (short of an approval process), only all-or-nothing API
-tokens. So instead of using Fastmail's (nonexistent) OAuth, we:
+MCP servers like [`fastmail-cli`](https://github.com/radiosilence/fastmail-cli)
+are single-tenant (one key, local stdio), but Claude's remote connectors need an
+OAuth-authenticated HTTPS endpoint. Rather than bolt OAuth + key storage onto
+every MCP, the gateway centralizes it:
 
-1. Authenticate the **user** to us via OAuth (Ory Hydra as the AS, GitHub as the
-   upstream identity — you never store passwords).
-2. Map that identity to a Fastmail API token the user pastes into a dashboard,
-   stored encrypted.
-3. Serve MCP over HTTP, injecting that token per request into the core.
+1. Authenticate the **user** via OAuth (Ory Hydra as the AS, GitHub as the
+   upstream identity — no passwords stored).
+2. Map that identity to a per-MCP key the user pastes into a dashboard, stored
+   encrypted.
+3. Proxy `/mcp/<id>` to that MCP's backend, injecting the key per request.
 
-The OAuth token proves *who you are*; it is never the Fastmail token.
+The OAuth token proves *who you are*; it is never the MCP's key.
 
-## Architecture (Model A)
+## Architecture (gateway + backends)
 
 ```
-Claude ──OAuth──► Hydra (AS: DCR, PKCE, tokens)   ← login/consent delegated back to us
-Claude ──Bearer─► this service (axum, N pods)
+Claude ──OAuth──► Hydra (AS: DCR via our /register proxy, PKCE, tokens)
+                    ▲ login/consent delegated back to the gateway
+Claude ──Bearer─► gateway (axum, N pods)
                     ├ introspect opaque bearer at Hydra → sub
-                    ├ dashboard: set/update/delete Fastmail token
-                    ├ Postgres: sub → enc(fastmail_token)   (XChaCha20-Poly1305)
-                    └ /mcp → fastmail-cli core, X-Fastmail-Token injected → JMAP
+                    ├ dashboard: manage a key per MCP
+                    ├ Postgres: (sub, mcp_id) → enc(key)   (XChaCha20-Poly1305)
+                    └ /mcp/<id> ──inject <MCP's header>──► backend MCP pod
+                                                             e.g. fastmail-cli mcp --http
 ```
 
-One process does auth + token store + dashboard + MCP (links the core as a
-library). Hydra and Postgres are separate deployments. Only Hydra ever serves
-OAuth endpoints — this service just publishes
-`/.well-known/oauth-protected-resource` pointing at it.
+Each MCP is a backend pod the gateway proxies to (Model B); the gateway links no
+MCP code. Backends stay dumb: key in → work out. Adding an MCP is an entry in
+`mcps.json`, not code. Hydra + Postgres are separate deployments; only Hydra
+serves OAuth endpoints (the gateway publishes protected-resource metadata
+pointing at it, and a `/register` DCR proxy).
 
-State is disposable: lose the DB and users just re-paste their token.
+State is disposable: lose the DB and users just re-paste their keys.
 
 ## Local development
 
@@ -69,7 +73,8 @@ domain). Then:
    `cloudflared tunnel login` if not already), writes `cloudflared/`, and brings
    the stack up with the tunnel URLs wired in automatically.
 3. `mise run verify` — checks the OAuth discovery chain over the tunnel.
-4. Add `https://<FASTMAIL_HOST>/mcp` as a custom connector in Claude.
+4. Add `https://<FASTMAIL_HOST>/mcp/fastmail` as a custom connector in Claude
+   (the path is `/mcp/<id>` for each registered MCP).
 
 Host login (`cert.pem`) is only for provisioning; the container authenticates
 the *run* with the per-tunnel `creds.json`. The service and Hydra stay plain
@@ -84,10 +89,31 @@ All via env (see `.env.example`). Notable:
 
 | var | meaning |
 |-----|---------|
-| `PUBLIC_URL` | browser-facing base of this service |
-| `TOKEN_ENC_KEY` | 32-byte base64 key; the only thing protecting stored tokens |
+| `PUBLIC_URL` | browser/Claude-facing base of the gateway |
+| `TOKEN_ENC_KEY` | 32-byte base64 key; the only thing protecting stored credentials |
 | `HYDRA_ISSUER` | browser/Claude-facing Hydra URL; advertised in protected-resource metadata |
-| `HYDRA_ADMIN_URL` | Hydra admin API (introspection + login/consent) — cluster-internal only |
+| `HYDRA_ADMIN_URL` | Hydra admin API (introspection, login/consent, DCR client-create) — cluster-internal only |
+| `MCP_REGISTRY` | path to the MCP registry JSON (default `mcps.json`) |
+
+### MCP registry (`mcps.json`)
+
+Each backend MCP is one entry — adding an MCP is config, not code:
+
+```json
+[
+  {
+    "id": "fastmail",
+    "name": "Fastmail",
+    "backend": "http://fastmail-mcp:8080/mcp",
+    "credential_header": "X-Fastmail-Token",
+    "key_help_url": "https://app.fastmail.com/settings/security/tokens",
+    "key_hint": "fmu1-…"
+  }
+]
+```
+
+`/mcp/fastmail` proxies to `backend`, injecting the user's stored key as
+`credential_header`.
 
 ## Deploy
 
@@ -103,8 +129,10 @@ These are deliberately stubbed/simplified in this first cut:
 - **Access tokens are opaque + introspected** at Hydra (no JWT reaches any
   client; tokens are revocable). Introspection is per-request — add a short TTL
   cache if load warrants; note that caching trades away instant revocation.
-- **Hydra DCR / public client registration** must be explicitly configured for
-  production (the compose file runs `--dev`, which is not safe for prod).
+- **DCR runs through our `/register` proxy** (Hydra advertises it; we create the
+  client via Hydra admin and return a Claude-valid response). Hydra itself runs
+  `--dev` in compose — **not safe for prod**; drop `--dev` and configure real
+  TLS/secrets there.
 - **Encryption key rotation** is not implemented — rotating `TOKEN_ENC_KEY`
   currently orphans stored tokens (users re-paste). Fine given disposable state,
   but decide intentionally.
@@ -116,5 +144,6 @@ These are deliberately stubbed/simplified in this first cut:
   needs your identity gate regardless of who registers a client. Add a real
   consent screen too if you ever go multi-user. Not yet implemented — do this
   before it's genuinely public.
-- Custodial risk: you hold users' full-mailbox Fastmail tokens. Keep the enc key
-  in a real secret store with tight RBAC; never in the image or git.
+- Custodial risk, amplified: the gateway holds keys for *every* MCP and user
+  (e.g. full-mailbox Fastmail tokens). Keep `TOKEN_ENC_KEY` in a real secret
+  store with tight RBAC; never in the image or git.

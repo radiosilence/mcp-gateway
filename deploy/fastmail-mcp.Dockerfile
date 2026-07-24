@@ -7,9 +7,11 @@ FROM rust:1-bookworm AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang cmake pkg-config \
     && rm -rf /var/lib/apt/lists/*
+# Build from the rebinding-fix branch until it merges (#35), then switch to a
+# release tag (see the "release fastmail-cli + pin" step).
 RUN cargo install --locked \
     --git https://github.com/radiosilence/fastmail-cli \
-    --branch feat/mcp-per-request-token \
+    --branch fix/mcp-http-rebinding \
     fastmail-cli
 
 FROM debian:bookworm-slim

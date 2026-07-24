@@ -48,8 +48,14 @@ pub async fn register(
     // Log every registration so DCR abuse is visible in the logs (public DCR is
     // required for Claude; token issuance is still gated by the login allowlist).
     tracing::info!(
-        client_id = created.get("client_id").and_then(|v| v.as_str()).unwrap_or("?"),
-        client_name = created.get("client_name").and_then(|v| v.as_str()).unwrap_or("?"),
+        client_id = created
+            .get("client_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?"),
+        client_name = created
+            .get("client_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?"),
         "DCR: registered oauth client"
     );
 

@@ -101,10 +101,7 @@ impl HydraAdmin {
     /// (`/register`): Hydra OSS doesn't serve public DCR, and Claude rejects
     /// Hydra's DCR response shape anyway, so we create the client here and
     /// return a clean response ourselves.
-    pub async fn create_client(
-        &self,
-        body: &serde_json::Value,
-    ) -> Result<serde_json::Value> {
+    pub async fn create_client(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
         let url = format!("{}/admin/clients", self.base);
         let resp = self
             .http

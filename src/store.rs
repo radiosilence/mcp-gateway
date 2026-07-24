@@ -62,13 +62,11 @@ impl Store {
 
     /// Fetch and decrypt a user's credential for a given MCP, if stored.
     pub async fn get_credential(&self, sub: &str, mcp_id: &str) -> Result<Option<String>> {
-        let row = sqlx::query(
-            "SELECT enc_secret FROM credentials WHERE sub = $1 AND mcp_id = $2",
-        )
-        .bind(sub)
-        .bind(mcp_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row = sqlx::query("SELECT enc_secret FROM credentials WHERE sub = $1 AND mcp_id = $2")
+            .bind(sub)
+            .bind(mcp_id)
+            .fetch_optional(&self.pool)
+            .await?;
         match row {
             Some(row) => {
                 let sealed: String = row.get("enc_secret");
@@ -105,13 +103,11 @@ impl Store {
 
     /// Non-secret metadata for the dashboard (is a credential set, and when).
     pub async fn credential_meta(&self, sub: &str, mcp_id: &str) -> Result<Option<TokenMeta>> {
-        let row = sqlx::query(
-            "SELECT updated_at FROM credentials WHERE sub = $1 AND mcp_id = $2",
-        )
-        .bind(sub)
-        .bind(mcp_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row = sqlx::query("SELECT updated_at FROM credentials WHERE sub = $1 AND mcp_id = $2")
+            .bind(sub)
+            .bind(mcp_id)
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.map(|row| TokenMeta {
             updated_at: row.get("updated_at"),
         }))

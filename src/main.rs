@@ -74,7 +74,10 @@ async fn main() -> Result<()> {
         .route("/logout", get(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
         .route("/dashboard/{mcp_id}/token", post(dashboard::set_credential))
-        .route("/dashboard/{mcp_id}/delete", post(dashboard::delete_credential))
+        .route(
+            "/dashboard/{mcp_id}/delete",
+            post(dashboard::delete_credential),
+        )
         .route("/auth/login", get(auth::routes::hydra_login))
         .route("/auth/consent", get(auth::routes::hydra_consent))
         .route("/auth/github/callback", get(auth::routes::github_callback))

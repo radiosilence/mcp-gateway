@@ -85,7 +85,8 @@ pub async fn handle(
     };
 
     // Relay status + headers, stream the body (SSE-safe).
-    let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let status =
+        StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut resp_headers = upstream.headers().clone();
     resp_headers.remove(header::CONTENT_LENGTH);
     for h in HOP_BY_HOP {

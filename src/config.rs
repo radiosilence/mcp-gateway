@@ -91,8 +91,7 @@ impl Config {
 
     /// Whether a GitHub login may authenticate. Empty allowlist ⇒ anyone (dev).
     pub fn github_login_allowed(&self, login: &str) -> bool {
-        self.github_allowlist.is_empty()
-            || self.github_allowlist.contains(&login.to_lowercase())
+        self.github_allowlist.is_empty() || self.github_allowlist.contains(&login.to_lowercase())
     }
 
     /// The GitHub OAuth callback URL registered with the GitHub app.
@@ -121,10 +120,10 @@ const RESERVED_IDS: &[&str] = &[
 ];
 
 fn load_registry(path: &str) -> Result<Vec<Mcp>> {
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("reading MCP registry at {path}"))?;
-    let mcps: Vec<Mcp> = serde_json::from_str(&raw)
-        .with_context(|| format!("parsing MCP registry at {path}"))?;
+    let raw =
+        std::fs::read_to_string(path).with_context(|| format!("reading MCP registry at {path}"))?;
+    let mcps: Vec<Mcp> =
+        serde_json::from_str(&raw).with_context(|| format!("parsing MCP registry at {path}"))?;
     for m in &mcps {
         anyhow::ensure!(
             !m.id.is_empty() && !m.id.contains('/'),

@@ -23,14 +23,15 @@ Each additional MCP is another backend pod + a `mcps.json` entry. The registry
 
 Everything else stays as in compose. The deltas:
 
-- **Domains / URLs**: `PUBLIC_URL=https://fastmail.radiosilence.dev`,
-  `HYDRA_ISSUER=https://auth.radiosilence.dev`, and Hydra's
+  Domains: **prod = `blit.cc`, dev = `radiosilence.dev`**.
+- **Domains / URLs**: `PUBLIC_URL=https://mcp.blit.cc`,
+  `HYDRA_ISSUER=https://auth.blit.cc`, and Hydra's
   `URLS_SELF_ISSUER` / `URLS_LOGIN` / `URLS_CONSENT` to the real hosts.
   `HYDRA_ADMIN_URL` stays cluster-internal (e.g. `http://hydra-admin:4445`).
 - **TLS + routing**: ingress terminates TLS (cert-manager / LE) and routes
-  `mcp.radiosilence.dev` → gateway:8080, `auth.radiosilence.dev` →
-  hydra:4444. Two hosts, two backends; the gateway never fronts Hydra. Backend
-  MCP pods (fastmail-mcp, …) are internal — only the gateway reaches them.
+  `mcp.blit.cc` → gateway:8080, `auth.blit.cc` → hydra:4444. Two hosts, two
+  backends; the gateway never fronts Hydra. Backend MCP pods (fastmail-mcp, …)
+  are internal — only the gateway reaches them. Connector URL: `https://mcp.blit.cc/<id>`.
 - **Hydra admin (:4445) is NOT exposed** — ClusterIP / internal only. Reachable
   from the gateway pods, never from the ingress.
 - **Drop `--dev`**: run Hydra `serve all` (no `--dev`). Dev mode relaxes

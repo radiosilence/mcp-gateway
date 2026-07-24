@@ -85,7 +85,7 @@ pub async fn dashboard(
             name: m.name.clone(),
             has_credential,
             updated_at,
-            connector_url: format!("{base}/mcp/{}", m.id),
+            connector_url: format!("{base}/{}", m.id),
             key_help_url: m.key_help_url.clone().unwrap_or_default(),
             key_hint: m.key_hint.clone().unwrap_or_else(|| "paste key…".into()),
         });

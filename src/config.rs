@@ -93,11 +93,35 @@ impl Config {
     }
 }
 
+/// Path segments the gateway serves itself — an MCP id here would shadow a
+/// gateway route (MCPs are mounted at `/{id}`).
+const RESERVED_IDS: &[&str] = &[
+    "register",
+    "login",
+    "logout",
+    "dashboard",
+    "healthz",
+    "auth",
+    ".well-known",
+];
+
 fn load_registry(path: &str) -> Result<Vec<Mcp>> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("reading MCP registry at {path}"))?;
     let mcps: Vec<Mcp> = serde_json::from_str(&raw)
         .with_context(|| format!("parsing MCP registry at {path}"))?;
+    for m in &mcps {
+        anyhow::ensure!(
+            !m.id.is_empty() && !m.id.contains('/'),
+            "invalid MCP id {:?}: must be a non-empty single path segment",
+            m.id
+        );
+        anyhow::ensure!(
+            !RESERVED_IDS.contains(&m.id.as_str()),
+            "MCP id {:?} is reserved (shadows a gateway route)",
+            m.id
+        );
+    }
     Ok(mcps)
 }
 

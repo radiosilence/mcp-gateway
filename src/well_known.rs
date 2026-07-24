@@ -14,7 +14,7 @@ pub async fn protected_resource(State(state): State<AppState>) -> Json<Value> {
     let resource = state.config.public_url.trim_end_matches('/');
     let issuer = state.config.hydra_issuer.trim_end_matches('/');
     Json(json!({
-        "resource": format!("{resource}/mcp"),
+        "resource": resource,
         "authorization_servers": [issuer],
         "bearer_methods_supported": ["header"],
         "scopes_supported": ["openid", "offline"],

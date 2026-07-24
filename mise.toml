@@ -5,10 +5,11 @@ cloudflared = "latest"
 jq = "latest"
 
 [env]
-# Dev-tunnel hostnames — must be on a domain you have on Cloudflare. Override
-# per-invocation: `FASTMAIL_HOST=… AUTH_HOST=… mise run tunnel`.
-FASTMAIL_HOST = "fastmail-dev.radiosilence.dev"
-AUTH_HOST = "auth-dev.radiosilence.dev"
+# Dev hostnames (radiosilence.dev = dev; blit.cc = prod). Must be on a domain
+# you have on Cloudflare. Override per-invocation:
+# `GATEWAY_HOST=… AUTH_HOST=… mise run tunnel`.
+GATEWAY_HOST = "mcp.radiosilence.dev"
+AUTH_HOST = "auth.radiosilence.dev"
 TUNNEL_NAME = "fastmail-mcp-dev"
 
 [tasks.up]
@@ -31,7 +32,7 @@ mkdir -p cloudflared
 [ -f "$HOME/.cloudflared/cert.pem" ] || cloudflared tunnel login
 cloudflared tunnel list --output json | jq -e --arg n "$TUNNEL_NAME" '.[]|select(.name==$n)' >/dev/null || cloudflared tunnel create "$TUNNEL_NAME"
 UUID=$(cloudflared tunnel list --output json | jq -r --arg n "$TUNNEL_NAME" '.[]|select(.name==$n)|.id')
-cloudflared tunnel route dns "$TUNNEL_NAME" "$FASTMAIL_HOST" || true
+cloudflared tunnel route dns "$TUNNEL_NAME" "$GATEWAY_HOST" || true
 cloudflared tunnel route dns "$TUNNEL_NAME" "$AUTH_HOST" || true
 rm -f cloudflared/creds.json cloudflared/config.yml
 install -m 600 "$HOME/.cloudflared/$UUID.json" cloudflared/creds.json
@@ -39,14 +40,14 @@ cat > cloudflared/config.yml <<CFG
 tunnel: $UUID
 credentials-file: /etc/cloudflared/creds.json
 ingress:
-  - hostname: $FASTMAIL_HOST
+  - hostname: $GATEWAY_HOST
     service: http://gateway:8080
   - hostname: $AUTH_HOST
     service: http://hydra:4444
   - service: http_status:404
 CFG
-echo ">> GitHub OAuth app callback must be: https://$FASTMAIL_HOST/auth/github/callback"
-export PUBLIC_URL="https://$FASTMAIL_HOST"
+echo ">> GitHub OAuth app callback must be: https://$GATEWAY_HOST/auth/github/callback"
+export PUBLIC_URL="https://$GATEWAY_HOST"
 export HYDRA_ISSUER="https://$AUTH_HOST"
 docker compose --profile tunnel up --build
 """
@@ -55,10 +56,10 @@ docker compose --profile tunnel up --build
 description = "Check the OAuth discovery chain over the tunnel"
 run = """
 set -e
-echo "== protected-resource (service) =="
-curl -fsS "https://$FASTMAIL_HOST/.well-known/oauth-protected-resource" | jq .
-echo "== /mcp (expect 401) =="
-curl -s -o /dev/null -w "%{http_code}\\n" "https://$FASTMAIL_HOST/mcp"
+echo "== protected-resource (gateway) =="
+curl -fsS "https://$GATEWAY_HOST/.well-known/oauth-protected-resource" | jq .
+echo "== /fastmail (expect 401) =="
+curl -s -o /dev/null -w "%{http_code}\\n" -X POST "https://$GATEWAY_HOST/fastmail" -H 'content-type: application/json' -d '{}'
 echo "== openid-configuration (hydra) =="
 curl -fsS "https://$AUTH_HOST/.well-known/openid-configuration" | jq '{issuer,registration_endpoint,token_endpoint,jwks_uri}'
 """

@@ -76,7 +76,9 @@ async fn main() -> Result<()> {
             "/.well-known/oauth-protected-resource",
             get(well_known::protected_resource),
         )
-        .route("/mcp/{id}", any(proxy::handle))
+        // MCPs live at the root (`/fastmail`); a reserved-id guard at config
+        // load keeps them from shadowing the gateway's own routes above.
+        .route("/{id}", any(proxy::handle))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 

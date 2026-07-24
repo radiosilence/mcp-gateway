@@ -63,18 +63,18 @@ Claude's connector is fetched by Anthropic's servers, not your machine, so
 `localhost` is unreachable — and **both** the service and Hydra must be public
 (Claude talks to each directly). One tunnel, two hostnames does it:
 
-Hostnames default to `fastmail-dev.radiosilence.dev` / `auth-dev.radiosilence.dev`
-(set `FASTMAIL_HOST` / `AUTH_HOST` in `mise.toml` or per-invocation for your own
-domain). Then:
+Hostnames default to `mcp.radiosilence.dev` / `auth.radiosilence.dev` (dev;
+prod is `mcp.blit.cc` / `auth.blit.cc`). Set `GATEWAY_HOST` / `AUTH_HOST` in
+`mise.toml` or per-invocation for your own domain. Then:
 
 1. Point the GitHub OAuth app's callback at
-   `https://<FASTMAIL_HOST>/auth/github/callback`.
+   `https://<GATEWAY_HOST>/auth/github/callback`.
 2. `mise run tunnel` — provisions the tunnel + DNS (one-time browser
    `cloudflared tunnel login` if not already), writes `cloudflared/`, and brings
    the stack up with the tunnel URLs wired in automatically.
 3. `mise run verify` — checks the OAuth discovery chain over the tunnel.
-4. Add `https://<FASTMAIL_HOST>/mcp/fastmail` as a custom connector in Claude
-   (the path is `/mcp/<id>` for each registered MCP).
+4. Add `https://<GATEWAY_HOST>/<id>` as a custom connector in Claude — e.g.
+   `https://mcp.radiosilence.dev/fastmail`.
 
 Host login (`cert.pem`) is only for provisioning; the container authenticates
 the *run* with the per-tunnel `creds.json`. The service and Hydra stay plain
@@ -112,8 +112,10 @@ Each backend MCP is one entry — adding an MCP is config, not code:
 ]
 ```
 
-`/mcp/fastmail` proxies to `backend`, injecting the user's stored key as
-`credential_header`.
+`/fastmail` proxies to `backend`, injecting the user's stored key as
+`credential_header`. (Ids that would shadow a gateway route — `register`,
+`auth`, `login`, `logout`, `dashboard`, `healthz`, `.well-known` — are rejected
+at startup.)
 
 ## Deploy
 

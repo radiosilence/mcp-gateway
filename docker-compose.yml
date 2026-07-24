@@ -55,6 +55,12 @@ services:
       # registration_endpoint; it proxies to Hydra's admin API and returns a
       # Claude-valid response.
       WEBFINGER_OIDC_DISCOVERY_CLIENT_REGISTRATION_URL: ${PUBLIC_URL:-http://localhost:8080}/register
+      # TLS is terminated by the proxy (cloudflared/Traefik), so Hydra sees http
+      # and won't mark cookies Secure. --dev sets SameSite=None, and browsers
+      # drop None-without-Secure → "no CSRF value" 403. AS + gateway are the same
+      # registrable domain, so SameSite=Lax is sufficient and avoids the Secure
+      # requirement.
+      SERVE_COOKIES_SAME_SITE_MODE: Lax
       LOG_LEVEL: info
     ports:
       - "4444:4444" # public

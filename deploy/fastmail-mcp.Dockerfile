@@ -19,5 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /usr/local/cargo/bin/fastmail-cli /usr/local/bin/fastmail-cli
 EXPOSE 8080
+RUN useradd --system --uid 10001 --create-home app
+USER app
 ENTRYPOINT ["fastmail-cli"]
 CMD ["mcp", "--http", "0.0.0.0:8080"]

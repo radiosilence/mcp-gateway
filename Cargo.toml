@@ -15,7 +15,11 @@ path = "src/main.rs"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "cors"] }
+tower-http = { version = "0.6", features = ["trace"] }
+tower_governor = { version = "0.8", default-features = false, features = [
+  "axum",
+  "tracing",
+] }
 http = "1"
 
 # Storage

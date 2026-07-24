@@ -13,4 +13,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build /app/target/release/mcp-gateway /usr/local/bin/mcp-gateway
 EXPOSE 8080
 ENV BIND_ADDR=0.0.0.0:8080
+RUN useradd --system --uid 10001 --create-home app
+USER app
 ENTRYPOINT ["/usr/local/bin/mcp-gateway"]

@@ -140,12 +140,17 @@ These are deliberately stubbed/simplified in this first cut:
   but decide intentionally.
 - **DCR is public + consent is auto-granted.** Claude requires Dynamic Client
   Registration (it auto-registers), so DCR must stay enabled — but public DCR +
-  auto-consent means an attacker could register a client and phish a
-  token-holder into authorizing it. **The required control is a login
-  allowlist**: restrict `/auth/login` to known GitHub ids so token issuance
-  needs your identity gate regardless of who registers a client. Add a real
-  consent screen too if you ever go multi-user. Not yet implemented — do this
-  before it's genuinely public.
+  auto-consent means anyone could register a client and phish a token-holder
+  into authorizing it. The control against this is a **GitHub login
+  allowlist** (`GH_ALLOWED`, see [`config.rs`](src/config.rs)): a
+  comma-separated list of GitHub logins permitted to authenticate, checked in
+  the GitHub OAuth callback ([`auth/routes.rs`](src/auth/routes.rs)) before a
+  session or Hydra login is granted — a registered client is useless without a
+  token, and tokens only issue to allowlisted users. **Leaving `GH_ALLOWED`
+  unset or empty allows *any* GitHub account to authenticate**; the gateway
+  logs a loud warning at boot in that case ([`main.rs`](src/main.rs)) but does
+  not refuse to start. Set `GH_ALLOWED` before a public deploy. Add a real
+  consent screen too if you ever go multi-user.
 - Custodial risk, amplified: the gateway holds keys for *every* MCP and user
   (e.g. full-mailbox Fastmail tokens). Keep `TOKEN_ENC_KEY` in a real secret
   store with tight RBAC; never in the image or git.

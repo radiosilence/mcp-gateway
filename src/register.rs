@@ -45,6 +45,14 @@ pub async fn register(
         .await
         .map_err(|e| AppError::Upstream(e.to_string()))?;
 
+    // Log every registration so DCR abuse is visible in the logs (public DCR is
+    // required for Claude; token issuance is still gated by the login allowlist).
+    tracing::info!(
+        client_id = created.get("client_id").and_then(|v| v.as_str()).unwrap_or("?"),
+        client_name = created.get("client_name").and_then(|v| v.as_str()).unwrap_or("?"),
+        "DCR: registered oauth client"
+    );
+
     // Build a clean RFC 7591 response — only non-empty fields.
     let mut out = Map::new();
     for key in [

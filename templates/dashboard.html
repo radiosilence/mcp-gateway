@@ -72,19 +72,18 @@
         </details>
       </div>
 
-      <div class="mt-4 flex items-center gap-4">
-        <details class="text-xs">
-          <summary class="cursor-pointer select-none text-slate-500 hover:text-slate-900 dark:hover:text-white">Replace key</summary>
-          <form method="post" action="/dashboard/{{ m.id }}/token" class="mt-2 flex flex-col gap-2 sm:flex-row">
-            <input type="password" name="token" placeholder="{{ m.key_hint }}" autocomplete="off" required
-                   class="flex-1 rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none" />
-            <button type="submit" class="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">Replace</button>
-          </form>
-        </details>
-        <form method="post" action="/dashboard/{{ m.id }}/delete" onsubmit="return confirm('Disconnect {{ m.name }}? This wipes your stored key.')">
-          <button class="rounded-lg px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/50">Disconnect</button>
+      <details class="mt-4 text-xs">
+        <summary class="cursor-pointer select-none text-slate-500 hover:text-slate-900 dark:hover:text-white">Replace key</summary>
+        <form method="post" action="/dashboard/{{ m.id }}/token" class="mt-2 flex flex-col gap-2 sm:flex-row">
+          <input type="password" name="token" placeholder="{{ m.key_hint }}" autocomplete="off" required
+                 class="flex-1 rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none" />
+          <button type="submit" class="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">Replace</button>
         </form>
-      </div>
+      </details>
+
+      <form method="post" action="/dashboard/{{ m.id }}/delete" class="mt-4" onsubmit="return confirm('Disconnect {{ m.name }}? This wipes your stored key.')">
+        <button class="rounded-lg px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 ring-1 ring-inset ring-red-300 dark:ring-red-800/60 hover:bg-red-50 dark:hover:bg-red-950/40">Disconnect</button>
+      </form>
 
       {% else %}
 

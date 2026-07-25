@@ -152,7 +152,10 @@ injected into its own header:
     { "id": "password", "label": "App-specific password", "header": "X-CalDAV-Password",
       "secret": true, "hint": "abcd-efgh-ijkl-mnop" },
     { "id": "url", "label": "CalDAV server", "header": "X-CalDAV-Url",
-      "secret": false, "default": "https://caldav.icloud.com", "required": false }
+      "secret": false, "default": "https://caldav.icloud.com", "required": false },
+    { "id": "calendar", "label": "Default calendar for new events",
+      "header": "X-CalDAV-Calendar", "secret": false, "required": false,
+      "options_query": "{ options: calendars { value: name label: name disabled: readOnly isDefault } }" }
   ]
 }
 ```
@@ -166,6 +169,19 @@ injected into its own header:
 | `default` | what an optional field falls back to when left blank; shown as a `Default: …` placeholder rather than prefilled, so the box reads as safe to skip |
 | `hint` | placeholder text; overrides the `Default: …` placeholder |
 | `required` | default `true`; an optional field left blank with no default simply isn't stored, and the backend applies its own |
+| `options_query` | GraphQL query run against the backend's `graphql` tool, with the user's own credentials, to suggest values for this field |
+
+`options_query` exists because some values only the backend knows — which
+calendars an account has, say. Alias the selection to `options { value label
+disabled isDefault }` and the dashboard needs no per-field mapping config; the
+query defines the shape. Such a field appears only once the account is
+connected (there is nobody to ask before that), and is rejected at boot if
+marked `required`, since the connect form can't show it. It renders as a
+`<datalist>`, so a backend that's down costs suggestions, not the ability to
+type a name.
+
+Editing a connected MCP leaves secrets blank to keep the stored value —
+otherwise changing one field would mean retyping the app password.
 
 Set `credential_header` **or** `fields`, never both. The dashboard builds its
 form from whichever is present, and the proxy strips every declared header from

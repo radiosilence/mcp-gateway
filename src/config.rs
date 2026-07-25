@@ -35,6 +35,15 @@ pub struct CredentialField {
     /// simply not stored, and the backend applies its own default.
     #[serde(default = "default_true")]
     pub required: bool,
+    /// GraphQL query whose results become this field's suggestions, run against
+    /// the backend's `graphql` tool with the user's own credentials. Alias the
+    /// selection to `options { value label }` — the dashboard reads that shape
+    /// and nothing else, so no per-field mapping config is needed.
+    ///
+    /// Only offered once credentials are stored: without them there is nobody
+    /// to ask.
+    #[serde(default)]
+    pub options_query: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -207,6 +216,7 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
             default: None,
             hint: m.key_hint.clone(),
             required: true,
+            options_query: None,
         }];
     } else {
         anyhow::ensure!(
@@ -221,6 +231,14 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
         anyhow::ensure!(
             !f.id.is_empty() && seen.insert(f.id.as_str()),
             "MCP {:?} has an empty or duplicated field id {:?}",
+            m.id,
+            f.id
+        );
+        // A field the user can't see on the connect form can't be required:
+        // its choices come from a backend that needs credentials first.
+        anyhow::ensure!(
+            f.options_query.is_none() || !f.required,
+            "MCP {:?} field {:?} is required but its options come from the backend",
             m.id,
             f.id
         );
@@ -348,7 +366,12 @@ mod tests {
         let headers: Vec<&str> = caldav.fields.iter().map(|f| f.header.as_str()).collect();
         assert_eq!(
             headers,
-            ["X-CalDAV-Username", "X-CalDAV-Password", "X-CalDAV-Url"]
+            [
+                "X-CalDAV-Username",
+                "X-CalDAV-Password",
+                "X-CalDAV-Url",
+                "X-CalDAV-Calendar"
+            ]
         );
         // Only the password is a secret; the username and server URL are
         // shown in the dashboard so they can be edited in place.
@@ -361,6 +384,31 @@ mod tests {
         let url = caldav.fields.iter().find(|f| f.id == "url").unwrap();
         assert!(!url.required);
         assert_eq!(url.default.as_deref(), Some("https://caldav.icloud.com"));
+
+        // The calendar list comes from the backend, so the field is optional
+        // and hidden until the account is connected.
+        let calendar = caldav.fields.iter().find(|f| f.id == "calendar").unwrap();
+        assert!(!calendar.required);
+        let query = calendar.options_query.as_deref().unwrap();
+        assert!(
+            query.contains("options:"),
+            "aliased to the shape the form reads: {query}"
+        );
+        assert!(
+            query.contains("value:") && query.contains("label:"),
+            "got {query}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_required_field_whose_options_need_credentials() {
+        let err = parse(
+            r#"[{"id":"x","name":"X","backend":"http://x/mcp","fields":[
+                 {"id":"a","label":"A","header":"X-A"},
+                 {"id":"b","label":"B","header":"X-B","options_query":"{ options { value } }"}]}]"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("options come from the backend"));
     }
 
     #[test]

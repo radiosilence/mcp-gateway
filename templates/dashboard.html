@@ -73,17 +73,20 @@
       </div>
 
       <details class="mt-4 text-xs">
-        <summary class="cursor-pointer select-none text-slate-500 hover:text-slate-900 dark:hover:text-white">Replace credentials</summary>
+        <summary class="cursor-pointer select-none text-slate-500 hover:text-slate-900 dark:hover:text-white">Edit credentials</summary>
         <form method="post" action="/dashboard/{{ m.id }}/token" class="mt-2 space-y-2">
+          <p class="text-slate-500 dark:text-slate-400">Leave a password blank to keep the stored one.</p>
           {% for f in m.fields %}
           <label class="block">
             <span class="text-slate-500 dark:text-slate-400">{{ f.label }}{% if !f.required %} <span class="text-slate-400 dark:text-slate-500">(optional)</span>{% endif %}</span>
             <input type="{{ f.input_type }}" name="{{ f.id }}" placeholder="{{ f.placeholder }}"
-                   value="{{ f.value }}" autocomplete="off" {% if f.required %}required{% endif %}
+                   value="{{ f.value }}" autocomplete="off" {% if f.required && !f.secret %}required{% endif %}
+                   {% if !f.options_url.is_empty() %}list="opts-{{ m.id }}-{{ f.id }}" data-options="{{ f.options_url }}"{% endif %}
                    class="mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none" />
+            {% if !f.options_url.is_empty() %}<datalist id="opts-{{ m.id }}-{{ f.id }}"></datalist>{% endif %}
           </label>
           {% endfor %}
-          <button type="submit" class="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">Replace</button>
+          <button type="submit" class="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">Save</button>
         </form>
       </details>
 
@@ -97,14 +100,14 @@
       <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Get credentials: <a class="underline" href="{{ m.key_help_url }}" target="_blank" rel="noreferrer">{{ m.key_help_url }}</a></p>
       {% endif %}
       <form method="post" action="/dashboard/{{ m.id }}/token" class="mt-4 space-y-3">
-        {% for f in m.fields %}
+        {% for f in m.fields %}{% if !f.from_backend %}
         <label class="block">
           <span class="text-xs text-slate-500 dark:text-slate-400">{{ f.label }}{% if !f.required %} <span class="text-slate-400 dark:text-slate-500">(optional)</span>{% endif %}</span>
           <input type="{{ f.input_type }}" name="{{ f.id }}" placeholder="{{ f.placeholder }}"
                  value="{{ f.value }}" autocomplete="off" {% if f.required %}required{% endif %}
                  class="mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none" />
         </label>
-        {% endfor %}
+        {% endif %}{% endfor %}
         <button type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500">Connect</button>
       </form>
       {% endif %}
@@ -122,6 +125,29 @@
         b.textContent = 'Copied';
         setTimeout(function () { b.textContent = prev; }, 1200);
       });
+    });
+
+    // Fill backend-populated fields (e.g. which calendars this account has).
+    // A datalist rather than a <select>: the input still accepts anything, so
+    // a backend that's down or slow costs suggestions, not the ability to type.
+    document.querySelectorAll('input[data-options]').forEach(function (input) {
+      var list = document.getElementById(input.getAttribute('list'));
+      fetch(input.getAttribute('data-options'), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (options) {
+          if (!Array.isArray(options)) throw new Error(options && options.error);
+          options.filter(function (o) { return !o.disabled; }).forEach(function (o) {
+            var opt = document.createElement('option');
+            opt.value = o.value;
+            if (o.label && o.label !== o.value) opt.label = o.label;
+            list.appendChild(opt);
+          });
+          var current = options.find(function (o) { return o.isDefault; });
+          if (current && !input.value) input.placeholder = current.value + ' (account default)';
+        })
+        .catch(function (e) {
+          input.placeholder = 'Type a name — could not load the list' + (e.message ? ': ' + e.message : '');
+        });
     });
   </script>
 </body>

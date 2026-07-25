@@ -6,10 +6,12 @@
 use std::collections::HashMap;
 
 use askama::Template;
+use axum::Json;
 use axum::extract::{Form, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
+use serde_json::json;
 
 use crate::auth::routes::current_session;
 use crate::error::{AppError, AppResult};
@@ -26,11 +28,17 @@ struct FieldView {
     label: String,
     /// `password` or `text` — secrets are never rendered back into the page.
     input_type: String,
+    secret: bool,
     placeholder: String,
     /// Prefilled with the stored value when the field is not a secret (so a
     /// server URL can be edited, not retyped). Empty for secrets.
     value: String,
     required: bool,
+    /// This field's choices come from the backend, so it is offered only after
+    /// the account is connected — before that there is nobody to ask.
+    from_backend: bool,
+    /// Endpoint serving those choices. Empty until credentials exist.
+    options_url: String,
 }
 
 struct McpView {
@@ -125,12 +133,18 @@ pub async fn dashboard(
                         .unwrap_or_default(),
                 },
                 input_type: if f.secret { "password" } else { "text" }.to_string(),
+                secret: f.secret,
                 // A default is advertised as a placeholder, not prefilled: the
                 // box stays visibly empty so it reads as "leave it alone".
                 placeholder: match (&f.hint, &f.default) {
                     (Some(hint), _) => hint.clone(),
                     (None, Some(default)) => format!("Default: {default}"),
                     (None, None) => f.label.to_lowercase(),
+                },
+                from_backend: f.options_query.is_some(),
+                options_url: match (has_credential, &f.options_query) {
+                    (true, Some(_)) => format!("/dashboard/{}/options/{}", m.id, f.id),
+                    _ => String::new(),
                 },
                 id: f.id.clone(),
                 label: f.label.clone(),
@@ -176,11 +190,27 @@ pub async fn set_credential(
         return Err(AppError::BadRequest("unknown mcp".into()));
     };
 
+    let stored = state
+        .store
+        .get_credentials(&session.sub, &mcp_id, mcp.primary_field())
+        .await
+        .map_err(AppError::Internal)?;
+
     let mut values = CredentialSet::new();
     for field in &mcp.fields {
         let raw = form.0.get(&field.id).map(String::as_str).unwrap_or("");
         let value = raw.trim();
         if value.is_empty() {
+            // A blank secret means "leave it alone" — it is never rendered
+            // back, so the user couldn't have retyped it to change one of the
+            // other fields. A blank non-secret was visibly cleared on purpose.
+            if field.secret
+                && let Some(prev) = stored.as_ref().and_then(|s| s.get(&field.id))
+                && !prev.is_empty()
+            {
+                values.insert(field.id.clone(), prev.clone());
+                continue;
+            }
             // An optional field left blank falls back to the configured
             // default, if there is one, and is otherwise simply not stored.
             match (field.required, field.default.as_deref()) {
@@ -212,6 +242,51 @@ pub async fn set_credential(
         .await
         .map_err(AppError::Internal)?;
     Ok(flash_redirect("Credentials saved"))
+}
+
+/// Suggestions for one field, fetched from the backend with the user's own
+/// credentials — e.g. the calendars this account can write to.
+///
+/// Its own endpoint rather than part of the dashboard render: a backend that is
+/// slow or down must not take the page with it, and the form still works as
+/// free text if this fails.
+pub async fn field_options(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((mcp_id, field_id)): Path<(String, String)>,
+) -> AppResult<Response> {
+    let Some(session) = current_session(&state, &headers).await else {
+        return Err(AppError::BadRequest("not signed in".into()));
+    };
+    let Some(mcp) = state.config.mcp(&mcp_id) else {
+        return Err(AppError::BadRequest("unknown mcp".into()));
+    };
+    let Some(query) = mcp
+        .fields
+        .iter()
+        .find(|f| f.id == field_id)
+        .and_then(|f| f.options_query.as_deref())
+    else {
+        return Err(AppError::BadRequest("field has no options".into()));
+    };
+    let Some(credentials) = state
+        .store
+        .get_credentials(&session.sub, &mcp_id, mcp.primary_field())
+        .await
+        .map_err(AppError::Internal)?
+    else {
+        return Err(AppError::BadRequest("no credentials stored".into()));
+    };
+
+    match crate::backend::graphql(&state, mcp, &credentials, query).await {
+        Ok(data) => Ok(Json(data.get("options").cloned().unwrap_or(json!([]))).into_response()),
+        Err(e) => {
+            // Wrong password, backend down, a calendar server having a bad day:
+            // the user's own error text is more use than a 500.
+            tracing::debug!(error = %e, mcp = %mcp_id, field = %field_id, "options lookup failed");
+            Ok(Json(json!({"error": e.to_string()})).into_response())
+        }
+    }
 }
 
 pub async fn delete_credential(

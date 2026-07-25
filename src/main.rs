@@ -6,6 +6,7 @@
 //! MCP with the right values injected per request.
 
 mod auth;
+mod backend;
 mod config;
 mod crypto;
 mod dashboard;
@@ -119,6 +120,10 @@ async fn main() -> Result<()> {
         .route("/logout", get(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
         .route("/dashboard/{mcp_id}/token", post(dashboard::set_credential))
+        .route(
+            "/dashboard/{mcp_id}/options/{field_id}",
+            get(dashboard::field_options),
+        )
         .route(
             "/dashboard/{mcp_id}/delete",
             post(dashboard::delete_credential),

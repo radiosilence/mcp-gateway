@@ -155,7 +155,8 @@ injected into its own header:
       "secret": false, "default": "https://caldav.icloud.com", "required": false },
     { "id": "calendar", "label": "Default calendar for new events",
       "header": "X-CalDAV-Calendar", "secret": false, "required": false,
-      "options_query": "{ options: calendars(first: 100) { nodes { value: name label: name disabled: readOnly isDefault } } }" }
+      "options_query": "{ options: calendars(first: 100) { nodes { value: name label: name disabled: readOnly isDefault } } }",
+      "sync_mutation": "mutation($value: String!) { setDefaultCalendar(id: $value) { success error } }" }
   ],
   "graphql": "http://caldav-mcp:8080/graphql"
 }
@@ -171,6 +172,7 @@ injected into its own header:
 | `hint` | placeholder text; overrides the `Default: …` placeholder |
 | `required` | default `true`; an optional field left blank with no default simply isn't stored, and the backend applies its own |
 | `options_query` | GraphQL query, run with the user's own credentials, whose results suggest values for this field |
+| `sync_mutation` | GraphQL mutation run after a save, telling the backend what was picked. Takes the value as `$value` |
 
 `options_query` exists because some values only the backend knows — which
 calendars an account has, say. Alias the selection to `options { value label
@@ -182,6 +184,19 @@ appears only once the account is connected (there is nobody to ask before
 that), and is rejected at boot if marked `required`, since the connect form
 can't show it. It renders as a `<datalist>`, so a backend that's down costs
 suggestions, not the ability to type a name.
+
+`sync_mutation` keeps the backend's own idea of a setting in step with ours —
+picking a calendar here also points the account's default at it
+(`setDefaultCalendar`), so the user's phone agrees with the gateway. It runs
+only when the value changed, and the value is passed as a variable rather than
+interpolated, since a calendar named `"` would otherwise rewrite the mutation.
+
+**Our stored value is authoritative.** It is what the proxy injects on every
+request, so the gateway behaves as asked whether or not the backend accepted
+the sync. A refusal — no scheduling support, a read-only account — leaves the
+save standing and is reported in the flash message. Mutations used this way
+have to expose `success` and `error`, because a backend declining a valid
+write answers with a payload saying so rather than a GraphQL error.
 
 The query goes to the MCP's `graphql` key when it has one — a plain
 GraphQL-over-HTTP endpoint the backend serves alongside `/mcp`

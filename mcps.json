@@ -42,7 +42,8 @@
         "secret": false,
         "required": false,
         "hint": "Blank = whichever calendar your calendar app uses",
-        "options_query": "{ options: calendars(first: 100) { totalCount nodes { value: name label: name disabled: readOnly isDefault } } }"
+        "options_query": "{ options: calendars(first: 100) { totalCount nodes { value: name label: name disabled: readOnly isDefault } } }",
+        "sync_mutation": "mutation($value: String!) { setDefaultCalendar(id: $value) { success error } }"
       }
     ],
     "graphql": "http://caldav-mcp:8080/graphql"

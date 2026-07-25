@@ -31,10 +31,11 @@ pub async fn graphql(
     mcp: &Mcp,
     credentials: &CredentialSet,
     query: &str,
+    variables: Option<Value>,
 ) -> Result<Value> {
     match &mcp.graphql {
-        Some(endpoint) => post_graphql(state, mcp, credentials, endpoint, query).await,
-        None => graphql_over_mcp(state, mcp, credentials, query).await,
+        Some(endpoint) => post_graphql(state, mcp, credentials, endpoint, query, variables).await,
+        None => graphql_over_mcp(state, mcp, credentials, query, variables).await,
     }
 }
 
@@ -45,9 +46,14 @@ async fn post_graphql(
     credentials: &CredentialSet,
     endpoint: &str,
     query: &str,
+    variables: Option<Value>,
 ) -> Result<Value> {
+    let mut body = json!({"query": query});
+    if let Some(variables) = variables {
+        body["variables"] = variables;
+    }
     let response = credentialed(state.http.post(endpoint), mcp, credentials)
-        .json(&json!({"query": query}))
+        .json(&body)
         .send()
         .await
         .context("backend unreachable")?;
@@ -66,10 +72,11 @@ async fn graphql_over_mcp(
     mcp: &Mcp,
     credentials: &CredentialSet,
     query: &str,
+    variables: Option<Value>,
 ) -> Result<Value> {
     let session = initialize(state, mcp, credentials).await?;
 
-    let result = call_tool(state, mcp, credentials, &session, query).await;
+    let result = call_tool(state, mcp, credentials, &session, query, variables).await;
 
     // The backend keeps session state until told otherwise; drop it even if the
     // call failed, so a dashboard refresh loop can't pile sessions up.
@@ -169,13 +176,19 @@ async fn call_tool(
     credentials: &CredentialSet,
     session: &Option<String>,
     query: &str,
+    variables: Option<Value>,
 ) -> Result<Value> {
+    let mut arguments = json!({"query": query});
+    // The tool takes its variables JSON-encoded, unlike the plain endpoint.
+    if let Some(variables) = variables {
+        arguments["variables"] = Value::String(variables.to_string());
+    }
     let response = request(state, mcp, credentials, session.as_deref())
         .json(&json!({
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/call",
-            "params": {"name": "graphql", "arguments": {"query": query}},
+            "params": {"name": "graphql", "arguments": arguments},
         }))
         .send()
         .await

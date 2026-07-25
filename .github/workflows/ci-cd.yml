@@ -4,11 +4,15 @@ name: CI/CD
 # QEMU). Auto-update modelled on radiosilence/blit (bump the jaritanet Pulumi
 # tag on each build so the cluster rolls to the new image).
 
+# Doc-only changes don't rebuild the image or redeploy — skip the whole
+# pipeline when a push/PR touches nothing but Markdown or the licence.
 on:
   push:
     branches: [main]
+    paths-ignore: ["**/*.md", "LICENSE"]
   pull_request:
     branches: [main]
+    paths-ignore: ["**/*.md", "LICENSE"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

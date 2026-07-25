@@ -163,8 +163,8 @@ injected into its own header:
 | `label` | shown in the dashboard |
 | `header` | header the backend reads this value from |
 | `secret` | default `true`; secrets render as password inputs and are never echoed back. Non-secret values (a server URL) are shown so they can be edited in place |
-| `default` | prefilled value, and what an optional field falls back to when left blank |
-| `hint` | placeholder text |
+| `default` | what an optional field falls back to when left blank; shown as a `Default: …` placeholder rather than prefilled, so the box reads as safe to skip |
+| `hint` | placeholder text; overrides the `Default: …` placeholder |
 | `required` | default `true`; an optional field left blank with no default simply isn't stored, and the backend applies its own |
 
 Set `credential_header` **or** `fields`, never both. The dashboard builds its

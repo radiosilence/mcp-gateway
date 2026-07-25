@@ -27,8 +27,8 @@ struct FieldView {
     /// `password` or `text` — secrets are never rendered back into the page.
     input_type: String,
     placeholder: String,
-    /// Prefilled value: a configured default, or the stored value when the
-    /// field is not a secret (so a server URL can be edited, not retyped).
+    /// Prefilled with the stored value when the field is not a secret (so a
+    /// server URL can be edited, not retyped). Empty for secrets.
     value: String,
     required: bool,
 }
@@ -122,15 +122,16 @@ pub async fn dashboard(
                         .as_ref()
                         .and_then(|s| s.get(&f.id))
                         .cloned()
-                        .or_else(|| f.default.clone())
                         .unwrap_or_default(),
                 },
                 input_type: if f.secret { "password" } else { "text" }.to_string(),
-                placeholder: f
-                    .hint
-                    .clone()
-                    .or_else(|| f.default.clone())
-                    .unwrap_or_else(|| f.label.to_lowercase()),
+                // A default is advertised as a placeholder, not prefilled: the
+                // box stays visibly empty so it reads as "leave it alone".
+                placeholder: match (&f.hint, &f.default) {
+                    (Some(hint), _) => hint.clone(),
+                    (None, Some(default)) => format!("Default: {default}"),
+                    (None, None) => f.label.to_lowercase(),
+                },
                 id: f.id.clone(),
                 label: f.label.clone(),
                 required: f.required,

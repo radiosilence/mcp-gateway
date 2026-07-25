@@ -129,6 +129,18 @@ services:
     expose:
       - "8080"
 
+  # The English folk archive, read-only. No credentials: mainlynorfolk.info is
+  # a public website, so this is the registry's first `"public": true` entry —
+  # it appears on the dashboard already connected, with no form to fill in.
+  # `--graphql` alongside so the dashboard can reach the same schema a model
+  # sees.
+  folk-mcp:
+    image: ghcr.io/radiosilence/mainlynorfolk-cli:main
+    pull_policy: always
+    command: ["mcp", "--http", "0.0.0.0:8080", "--graphql"]
+    expose:
+      - "8080"
+
   # Opt-in tunnel for Claude-connector testing. Don't run this directly — use
   # `mise run tunnel`, which provisions the tunnel + DNS, writes
   # cloudflared/{config.yml,creds.json} (gitignored, mounted below), and brings

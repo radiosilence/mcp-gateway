@@ -46,6 +46,9 @@ struct McpView {
     id: String,
     name: String,
     has_credential: bool,
+    /// Takes no credentials — connected on login, with no form to fill in and
+    /// nothing to disconnect.
+    public: bool,
     /// Whether any field is a setting rather than a credential — shown outside
     /// the credential form, since that is not what it is.
     has_settings: bool,
@@ -110,9 +113,12 @@ pub async fn dashboard(
             .credential_meta(&session.sub, &m.id)
             .await
             .map_err(AppError::Internal)?;
-        let (has_credential, updated_at) = match meta {
-            Some(meta) => (true, meta.updated_at.to_string()),
-            None => (false, String::new()),
+        // A public MCP is connected the moment the user has logged in — there
+        // is nothing to store, so nothing to wait for.
+        let (has_credential, updated_at) = match (m.is_public(), meta) {
+            (true, _) => (true, String::new()),
+            (false, Some(meta)) => (true, meta.updated_at.to_string()),
+            (false, None) => (false, String::new()),
         };
 
         // Non-secret values are read back so they can be edited in place;
@@ -169,6 +175,7 @@ pub async fn dashboard(
             id: m.id.clone(),
             name: m.name.clone(),
             has_credential,
+            public: m.is_public(),
             updated_at,
             connector_url,
             key_help_url: m.key_help_url.clone().unwrap_or_default(),

@@ -47,5 +47,12 @@
       }
     ],
     "graphql": "http://caldav-mcp:8080/graphql"
+  },
+  {
+    "id": "folk",
+    "name": "Folk (Mainly Norfolk)",
+    "backend": "http://folk-mcp:8080/mcp",
+    "public": true,
+    "graphql": "http://folk-mcp:8080/graphql"
   }
 ]

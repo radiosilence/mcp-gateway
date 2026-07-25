@@ -74,9 +74,19 @@ pub struct Mcp {
     /// to know which form the registry used.
     #[serde(default)]
     credential_header: Option<String>,
-    /// The values this MCP needs. Always non-empty after loading.
+    /// The values this MCP needs. Non-empty after loading unless [`Mcp::public`]
+    /// is set, which is the one case where an MCP legitimately needs nothing.
     #[serde(default)]
     pub fields: Vec<CredentialField>,
+    /// This MCP reads something public and takes no credentials at all.
+    ///
+    /// Opt-in rather than inferred from an empty `fields`, because "no
+    /// credentials declared" is far more often a typo than a decision, and
+    /// silently fronting a backend with no key is the wrong way to find out.
+    /// A public MCP shows no connect form: the OAuth login already established
+    /// who the user is, and there is nothing further to store.
+    #[serde(default)]
+    pub public: bool,
     /// Plain GraphQL-over-HTTP endpoint, when the backend serves one (e.g.
     /// `caldav-cli mcp --http … --graphql`). The dashboard prefers it for its
     /// own lookups: MCP is a tool-call protocol for models, and machine-to-
@@ -95,6 +105,12 @@ pub struct Mcp {
 }
 
 impl Mcp {
+    /// Whether this MCP needs nothing from the user. Ready to connect the
+    /// moment they log in.
+    pub fn is_public(&self) -> bool {
+        self.public
+    }
+
     /// The storage key of the first field — where a legacy single-secret row
     /// (a bare string rather than a JSON object) is mapped on read.
     pub fn primary_field(&self) -> &str {
@@ -219,10 +235,20 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
         m.id
     );
 
+    if m.public {
+        anyhow::ensure!(
+            m.credential_header.is_none() && m.fields.is_empty(),
+            "MCP {:?} is marked public but declares credentials — use one or the other",
+            m.id
+        );
+        return Ok(m);
+    }
+
     if m.fields.is_empty() {
         let header = m.credential_header.clone().with_context(|| {
             format!(
-                "MCP {:?} defines neither `credential_header` nor `fields`",
+                "MCP {:?} defines neither `credential_header` nor `fields` \
+                 (add \"public\": true if it genuinely needs none)",
                 m.id
             )
         })?;
@@ -332,6 +358,40 @@ mod tests {
         );
         assert!(!fields[2].required);
         assert_eq!(mcps[0].primary_field(), "username");
+    }
+
+    #[test]
+    fn a_public_mcp_needs_no_credentials() {
+        let mcps =
+            parse(r#"[{"id":"folk","name":"Folk","backend":"http://folk/mcp","public":true}]"#)
+                .unwrap();
+        assert!(mcps[0].is_public());
+        assert!(mcps[0].fields.is_empty(), "a public MCP declares no fields");
+    }
+
+    #[test]
+    fn a_public_mcp_may_not_also_declare_credentials() {
+        // Both forms together means one of them is a mistake, and guessing
+        // which would either leak a form onto a credential-less MCP or drop a
+        // credential silently.
+        assert!(
+            parse(
+                r#"[{"id":"x","name":"X","backend":"http://x/mcp","public":true,
+                     "credential_header":"X-Token"}]"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn an_mcp_is_not_public_by_default() {
+        // The absence of credentials stays an error: it is far more often a
+        // typo than a decision.
+        let mcps = parse(
+            r#"[{"id":"x","name":"X","backend":"http://x/mcp","credential_header":"X-Token"}]"#,
+        )
+        .unwrap();
+        assert!(!mcps[0].is_public());
     }
 
     #[test]

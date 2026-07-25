@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::auth::routes::current_session;
+use crate::config::Mcp;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::CredentialSet;
@@ -244,7 +245,138 @@ pub async fn set_credential(
         .set_credentials(&session.sub, &mcp_id, &values)
         .await
         .map_err(AppError::Internal)?;
-    Ok(flash_redirect("Credentials saved"))
+
+    match sync_upstream(&state, mcp, &values, stored.as_ref()).await {
+        None => Ok(flash_redirect("Credentials saved")),
+        // Stored either way — the proxy injects our value on every request, so
+        // the gateway behaves as asked whatever the backend thinks of it.
+        Some(complaint) => Ok(flash_redirect(&format!("Credentials saved. {complaint}"))),
+    }
+}
+
+/// Tell the backend what the user picked, for fields that declare a
+/// `sync_mutation` — so a calendar chosen here is also the one their phone
+/// uses. Returns what to tell the user when a backend wouldn't take it.
+///
+/// Only for values that actually changed: saving the form again shouldn't
+/// re-issue a write to someone's account.
+async fn sync_upstream(
+    state: &AppState,
+    mcp: &Mcp,
+    values: &CredentialSet,
+    stored: Option<&CredentialSet>,
+) -> Option<String> {
+    for field in &mcp.fields {
+        let Some(mutation) = &field.sync_mutation else {
+            continue;
+        };
+        let Some(value) = values.get(&field.id).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        if stored.and_then(|s| s.get(&field.id)) == Some(value) {
+            continue;
+        }
+        // Passed as a variable, never interpolated: a calendar named `"` would
+        // otherwise rewrite the mutation.
+        let variables = json!({ "value": value });
+        let refusal =
+            match crate::backend::graphql(state, mcp, values, mutation, Some(variables)).await {
+                Err(e) => Some(e.to_string()),
+                Ok(data) => refused(&data),
+            };
+        if let Some(reason) = refusal {
+            tracing::debug!(reason, mcp = %mcp.id, field = %field.id, "upstream sync refused");
+            return Some(format!(
+                "{} is set here, but the backend wouldn't take it: {reason}",
+                field.label
+            ));
+        }
+    }
+    None
+}
+
+/// Why a sync mutation didn't take, if it didn't.
+///
+/// A backend that declines an otherwise valid write answers with a payload
+/// saying so rather than a GraphQL error — `caldav-cli` returns
+/// `{ success: false, error }` for a server with nowhere to keep the property.
+/// So a mutation used for syncing has to surface those two fields.
+fn refused(data: &Value) -> Option<String> {
+    let payload = data.as_object()?.values().next()?;
+    match payload.get("success").and_then(Value::as_bool) {
+        Some(false) => Some(
+            payload
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("the backend declined it")
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+#[derive(Deserialize)]
+pub struct FieldUpdate {
+    value: String,
+}
+
+/// Save one field on its own, then sync it upstream.
+///
+/// The calendar picker changes a single value and shouldn't demand the rest of
+/// the form back — least of all a password it is never shown. Restricted to
+/// non-secret fields for that reason: a secret can only be set where the user
+/// typed it.
+pub async fn set_field(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((mcp_id, field_id)): Path<(String, String)>,
+    Form(update): Form<FieldUpdate>,
+) -> AppResult<Response> {
+    let Some(session) = current_session(&state, &headers).await else {
+        return Err(AppError::BadRequest("not signed in".into()));
+    };
+    let Some(mcp) = state.config.mcp(&mcp_id) else {
+        return Err(AppError::BadRequest("unknown mcp".into()));
+    };
+    let Some(field) = mcp.fields.iter().find(|f| f.id == field_id) else {
+        return Err(AppError::BadRequest("unknown field".into()));
+    };
+    if field.secret {
+        return Err(AppError::BadRequest("not settable on its own".into()));
+    }
+    let value = update.value.trim();
+    if value.chars().any(|c| c.is_control()) {
+        return Err(AppError::BadRequest(
+            "value contains control characters".into(),
+        ));
+    }
+
+    // Merge into what's stored: everything else stays as it was.
+    let Some(stored) = state
+        .store
+        .get_credentials(&session.sub, &mcp_id, mcp.primary_field())
+        .await
+        .map_err(AppError::Internal)?
+    else {
+        return Err(AppError::BadRequest("no credentials stored".into()));
+    };
+    let mut values = stored.clone();
+    match value.is_empty() {
+        true => {
+            values.remove(&field_id);
+        }
+        false => {
+            values.insert(field_id.clone(), value.to_string());
+        }
+    }
+    state
+        .store
+        .set_credentials(&session.sub, &mcp_id, &values)
+        .await
+        .map_err(AppError::Internal)?;
+
+    let message = sync_upstream(&state, mcp, &values, Some(&stored)).await;
+    Ok(Json(json!({"saved": true, "message": message})).into_response())
 }
 
 /// Suggestions for one field, fetched from the backend with the user's own
@@ -281,7 +413,7 @@ pub async fn field_options(
         return Err(AppError::BadRequest("no credentials stored".into()));
     };
 
-    match crate::backend::graphql(&state, mcp, &credentials, query).await {
+    match crate::backend::graphql(&state, mcp, &credentials, query, None).await {
         Ok(data) => Ok(Json(options_of(&data)).into_response()),
         Err(e) => {
             // Wrong password, backend down, a calendar server having a bad day:
@@ -338,6 +470,27 @@ pub async fn delete_credential(
 mod tests {
     use super::*;
 
+    /// The picker's save, through the same extractor.
+    #[tokio::test]
+    async fn a_single_field_update_deserializes_from_a_urlencoded_body() {
+        use axum::body::Body;
+        use axum::extract::FromRequest;
+        use axum::http::{Request, header};
+
+        for (body, expected) in [("value=home", "home"), ("value=", "")] {
+            let request = Request::builder()
+                .method("POST")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap();
+            let Form(update) = Form::<FieldUpdate>::from_request(request, &())
+                .await
+                .expect("a field update must deserialize");
+            // An empty value is how "use the account's own default" arrives.
+            assert_eq!(update.value, expected);
+        }
+    }
+
     /// The dashboard's own form, through the extractor that rejected it in
     /// production: a wrapper type here is a 422 on every multi-field save.
     #[tokio::test]
@@ -359,6 +512,26 @@ mod tests {
         assert_eq!(form.get("password").map(String::as_str), Some("pw"));
         // A cleared optional field arrives as an empty value, not as absent.
         assert_eq!(form.get("url").map(String::as_str), Some(""));
+    }
+
+    #[test]
+    fn a_declined_sync_is_read_out_of_the_payload() {
+        // Not a GraphQL error — the query succeeded, the write didn't.
+        let data =
+            json!({"setDefaultCalendar": {"success": false, "error": "no scheduling inbox"}});
+        assert_eq!(refused(&data).as_deref(), Some("no scheduling inbox"));
+
+        let bare = json!({"setDefaultCalendar": {"success": false}});
+        assert_eq!(refused(&bare).as_deref(), Some("the backend declined it"));
+    }
+
+    #[test]
+    fn a_sync_that_took_says_nothing() {
+        let data = json!({"setDefaultCalendar": {"success": true, "error": null}});
+        assert_eq!(refused(&data), None);
+        // A mutation that reports neither field is taken at its word.
+        assert_eq!(refused(&json!({"setDefaultCalendar": {}})), None);
+        assert_eq!(refused(&json!({})), None);
     }
 
     #[test]

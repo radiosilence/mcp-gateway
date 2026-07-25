@@ -44,6 +44,15 @@ pub struct CredentialField {
     /// to ask.
     #[serde(default)]
     pub options_query: Option<String>,
+    /// GraphQL mutation run after this field is saved, to tell the backend what
+    /// the user picked — `setDefaultCalendar`, say, so their phone agrees with
+    /// the gateway. Takes the new value as `$value`.
+    ///
+    /// Best-effort by definition: our stored value is what the proxy injects
+    /// and is authoritative, so a backend that refuses (no scheduling support,
+    /// a read-only account) leaves the save standing and says so.
+    #[serde(default)]
+    pub sync_mutation: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -226,6 +235,7 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
             hint: m.key_hint.clone(),
             required: true,
             options_query: None,
+            sync_mutation: None,
         }];
     } else {
         anyhow::ensure!(

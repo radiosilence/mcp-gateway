@@ -125,6 +125,10 @@ async fn main() -> Result<()> {
             get(dashboard::field_options),
         )
         .route(
+            "/dashboard/{mcp_id}/field/{field_id}",
+            post(dashboard::set_field),
+        )
+        .route(
             "/dashboard/{mcp_id}/delete",
             post(dashboard::delete_credential),
         )

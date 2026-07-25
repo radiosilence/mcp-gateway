@@ -1,8 +1,8 @@
 //! Streaming reverse proxy: `/mcp/{id}` → the backend MCP for `{id}`.
 //!
 //! Per request: introspect the bearer at Hydra → `sub`, look up + decrypt the
-//! user's credential for this MCP, strip any client-supplied copy of that
-//! header, inject the real one, forward, and stream the response back
+//! user's credentials for this MCP, strip any client-supplied copy of those
+//! headers, inject the real ones, forward, and stream the response back
 //! (MCP streamable-HTTP responses can be SSE, so the body is streamed, not
 //! buffered).
 //!
@@ -51,13 +51,15 @@ pub async fn handle(
         }
     };
 
-    // Forward headers minus hop-by-hop, auth, host, length — and critically the
-    // credential header, so a client can't smuggle its own.
+    // Forward headers minus hop-by-hop, auth, host, length — and critically
+    // every credential header this MCP uses, so a client can't smuggle its own.
     let mut fwd = headers.clone();
     fwd.remove(header::AUTHORIZATION);
     fwd.remove(header::HOST);
     fwd.remove(header::CONTENT_LENGTH);
-    fwd.remove(mcp.credential_header.as_str());
+    for field in &mcp.fields {
+        fwd.remove(field.header.as_str());
+    }
     for h in HOP_BY_HOP {
         fwd.remove(h);
     }
@@ -68,10 +70,31 @@ pub async fn handle(
         .headers(fwd)
         .body(body.to_vec());
 
-    // Inject the user's credential for this MCP (absent is not fatal — the
-    // backend returns its own "no token" error the model can relay).
-    match state.store.get_credential(&sub, &id).await {
-        Ok(Some(secret)) => req = req.header(mcp.credential_header.as_str(), secret),
+    // Inject the user's credentials for this MCP (absent is not fatal — the
+    // backend returns its own "not configured" error the model can relay).
+    match state
+        .store
+        .get_credentials(&sub, &id, mcp.primary_field())
+        .await
+    {
+        Ok(Some(values)) => {
+            for field in &mcp.fields {
+                let Some(value) = values.get(&field.id).filter(|v| !v.is_empty()) else {
+                    continue;
+                };
+                // Header names are validated at config load; values come from
+                // user input, so a bad one is skipped rather than failing the
+                // whole request with a confusing transport error.
+                match header::HeaderValue::from_str(value) {
+                    Ok(v) => req = req.header(field.header.as_str(), v),
+                    Err(_) => tracing::warn!(
+                        mcp = %id,
+                        field = %field.id,
+                        "stored credential is not a valid header value; skipping"
+                    ),
+                }
+            }
+        }
         Ok(None) => tracing::debug!(%sub, mcp = %id, "no credential stored"),
         Err(e) => tracing::error!(error = %e, "credential lookup failed"),
     }

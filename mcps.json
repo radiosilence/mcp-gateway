@@ -6,5 +6,45 @@
     "credential_header": "X-Fastmail-Token",
     "key_help_url": "https://app.fastmail.com/settings/security/tokens",
     "key_hint": "fmu1-…"
+  },
+  {
+    "id": "caldav",
+    "name": "Calendar (CalDAV)",
+    "backend": "http://caldav-mcp:8080/mcp",
+    "key_help_url": "https://appleid.apple.com",
+    "fields": [
+      {
+        "id": "username",
+        "label": "Apple ID / username",
+        "header": "X-CalDAV-Username",
+        "secret": false,
+        "hint": "you@icloud.com"
+      },
+      {
+        "id": "password",
+        "label": "App-specific password",
+        "header": "X-CalDAV-Password",
+        "secret": true,
+        "hint": "abcd-efgh-ijkl-mnop"
+      },
+      {
+        "id": "url",
+        "label": "CalDAV server",
+        "header": "X-CalDAV-Url",
+        "secret": false,
+        "default": "https://caldav.icloud.com",
+        "required": false
+      },
+      {
+        "id": "calendar",
+        "label": "Default calendar for new events",
+        "header": "X-CalDAV-Calendar",
+        "secret": false,
+        "required": false,
+        "hint": "Blank = whichever calendar your calendar app uses",
+        "options_query": "{ options: calendars(first: 100) { totalCount nodes { value: name label: name disabled: readOnly isDefault } } }"
+      }
+    ],
+    "graphql": "http://caldav-mcp:8080/graphql"
   }
 ]

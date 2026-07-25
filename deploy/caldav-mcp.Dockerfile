@@ -1,13 +1,14 @@
-# Backend MCP: caldav-cli in HTTP mode. Tracks main until the first release
-# lands, then pin a tag — a feature branch would break the build the moment it
-# is merged and deleted. Unlike the fastmail image there is no native toolchain
-# to install: caldav-cli has no kreuzberg/pdfium dependency, so this is a
-# plain, fast Rust build.
+# Backend MCP: caldav-cli in HTTP mode. Pinned to a release tag: `--branch main`
+# sits inside a RUN layer that Docker caches, so a rebuild would happily reuse a
+# months-old binary with nothing to show for it. Bumping the tag is a visible
+# one-line diff. Unlike the fastmail image there is no native toolchain to
+# install: caldav-cli has no kreuzberg/pdfium dependency, so this is a plain,
+# fast Rust build.
 
 FROM rust:1-bookworm AS build
 RUN cargo install --locked \
     --git https://github.com/radiosilence/caldav-cli \
-    --branch main \
+    --tag v0.3.0 \
     caldav-cli
 
 FROM debian:bookworm-slim

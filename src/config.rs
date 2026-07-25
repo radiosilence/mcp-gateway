@@ -68,6 +68,15 @@ pub struct Mcp {
     /// The values this MCP needs. Always non-empty after loading.
     #[serde(default)]
     pub fields: Vec<CredentialField>,
+    /// Plain GraphQL-over-HTTP endpoint, when the backend serves one (e.g.
+    /// `caldav-cli mcp --http … --graphql`). The dashboard prefers it for its
+    /// own lookups: MCP is a tool-call protocol for models, and machine-to-
+    /// machine it costs a session handshake and two layers of unwrapping to
+    /// send the same query. Absent ⇒ fall back to the `graphql` MCP tool.
+    ///
+    /// Never proxied — clients reach `/{id}` only, which goes to `backend`.
+    #[serde(default)]
+    pub graphql: Option<String>,
     /// Optional link shown in the dashboard for where to get the key.
     #[serde(default)]
     pub key_help_url: Option<String>,

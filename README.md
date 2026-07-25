@@ -155,8 +155,9 @@ injected into its own header:
       "secret": false, "default": "https://caldav.icloud.com", "required": false },
     { "id": "calendar", "label": "Default calendar for new events",
       "header": "X-CalDAV-Calendar", "secret": false, "required": false,
-      "options_query": "{ options: calendars { value: name label: name disabled: readOnly isDefault } }" }
-  ]
+      "options_query": "{ options: calendars(first: 100) { nodes { value: name label: name disabled: readOnly isDefault } } }" }
+  ],
+  "graphql": "http://caldav-mcp:8080/graphql"
 }
 ```
 
@@ -169,16 +170,26 @@ injected into its own header:
 | `default` | what an optional field falls back to when left blank; shown as a `Default: …` placeholder rather than prefilled, so the box reads as safe to skip |
 | `hint` | placeholder text; overrides the `Default: …` placeholder |
 | `required` | default `true`; an optional field left blank with no default simply isn't stored, and the backend applies its own |
-| `options_query` | GraphQL query run against the backend's `graphql` tool, with the user's own credentials, to suggest values for this field |
+| `options_query` | GraphQL query, run with the user's own credentials, whose results suggest values for this field |
 
 `options_query` exists because some values only the backend knows — which
 calendars an account has, say. Alias the selection to `options { value label
 disabled isDefault }` and the dashboard needs no per-field mapping config; the
-query defines the shape. Such a field appears only once the account is
-connected (there is nobody to ask before that), and is rejected at boot if
-marked `required`, since the connect form can't show it. It renders as a
-`<datalist>`, so a backend that's down costs suggestions, not the ability to
-type a name.
+query defines the shape. A Relay connection is unwrapped, so `options { nodes
+{ … } }` works too — which is what `caldav-cli` returns, and why the shipped
+query passes `first: 100` (collections there default to 25). Such a field
+appears only once the account is connected (there is nobody to ask before
+that), and is rejected at boot if marked `required`, since the connect form
+can't show it. It renders as a `<datalist>`, so a backend that's down costs
+suggestions, not the ability to type a name.
+
+The query goes to the MCP's `graphql` key when it has one — a plain
+GraphQL-over-HTTP endpoint the backend serves alongside `/mcp`
+(`caldav-cli mcp --http … --graphql`), reached service-to-service and never
+proxied for clients. Without it the same query goes through the `graphql` MCP
+tool instead, which costs a session handshake and arrives wrapped in JSON-RPC,
+wrapped in a tool result, as a string. MCP is a tool-call protocol for models;
+between two services it is all envelope.
 
 Editing a connected MCP leaves secrets blank to keep the stored value —
 otherwise changing one field would mean retyping the app password.

@@ -1,12 +1,13 @@
-//! Just enough MCP client to ask a backend a question on the user's behalf.
+//! Asking a backend a question on the user's behalf.
 //!
-//! The proxy is otherwise a dumb pipe — the client does the protocol. But the
+//! The proxy is otherwise a dumb pipe — the client speaks the protocol. But the
 //! dashboard needs to populate a field's choices (which calendars does this
-//! account have?), and only the backend knows. So: initialise a session, call
-//! the `graphql` tool with the user's own credentials, tear the session down.
+//! account have?), and only the backend knows.
 //!
-//! Streamable HTTP answers a POST with either JSON or a one-frame SSE stream,
-//! depending on the server; both are handled.
+//! A backend serving plain GraphQL gets one POST. One that speaks only MCP gets
+//! the long way round: initialise a session, call the `graphql` tool, tear the
+//! session down — and its answer arrives as JSON-RPC (bare or as an SSE frame)
+//! wrapping a tool result wrapping the GraphQL response as a string.
 
 use anyhow::{Context, Result, bail};
 use axum::http::header;
@@ -19,9 +20,48 @@ use crate::store::CredentialSet;
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const SESSION_HEADER: &str = "mcp-session-id";
 
-/// Run `query` against `mcp`'s `graphql` tool as the owner of `credentials`,
-/// returning the query's `data` object.
+/// Run `query` against `mcp` as the owner of `credentials`, returning the
+/// query's `data` object.
+///
+/// Straight to the backend's GraphQL endpoint where it has one; otherwise
+/// through the `graphql` MCP tool, which costs a session handshake and arrives
+/// wrapped in JSON-RPC, wrapped in a tool result, as a string.
 pub async fn graphql(
+    state: &AppState,
+    mcp: &Mcp,
+    credentials: &CredentialSet,
+    query: &str,
+) -> Result<Value> {
+    match &mcp.graphql {
+        Some(endpoint) => post_graphql(state, mcp, credentials, endpoint, query).await,
+        None => graphql_over_mcp(state, mcp, credentials, query).await,
+    }
+}
+
+/// One POST, one JSON response.
+async fn post_graphql(
+    state: &AppState,
+    mcp: &Mcp,
+    credentials: &CredentialSet,
+    endpoint: &str,
+    query: &str,
+) -> Result<Value> {
+    let response = credentialed(state.http.post(endpoint), mcp, credentials)
+        .json(&json!({"query": query}))
+        .send()
+        .await
+        .context("backend unreachable")?;
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        bail!("backend returned {status}");
+    }
+    let parsed: Value = serde_json::from_str(&body).context("backend returned unparseable JSON")?;
+    graphql_data(parsed)
+}
+
+async fn graphql_over_mcp(
     state: &AppState,
     mcp: &Mcp,
     credentials: &CredentialSet,
@@ -44,19 +84,14 @@ pub async fn graphql(
     result
 }
 
-/// A request to the backend carrying the user's credential headers.
-fn request(
-    state: &AppState,
+/// Attach the user's credentials as the headers this MCP declares. The backend
+/// trusts them unconditionally — it is only reachable inside the cluster, and
+/// the gateway is the thing that authenticated the user.
+fn credentialed(
+    mut req: reqwest::RequestBuilder,
     mcp: &Mcp,
     credentials: &CredentialSet,
-    session: Option<&str>,
 ) -> reqwest::RequestBuilder {
-    let mut req = state
-        .http
-        .post(&mcp.backend)
-        // Streamable HTTP lets the server pick; accept both.
-        .header(header::ACCEPT, "application/json, text/event-stream")
-        .header(header::CONTENT_TYPE, "application/json");
     for field in &mcp.fields {
         if let Some(value) = credentials.get(&field.id).filter(|v| !v.is_empty())
             && let Ok(v) = header::HeaderValue::from_str(value)
@@ -64,6 +99,19 @@ fn request(
             req = req.header(field.header.as_str(), v);
         }
     }
+    req.header(header::CONTENT_TYPE, "application/json")
+}
+
+/// An MCP request to the backend.
+fn request(
+    state: &AppState,
+    mcp: &Mcp,
+    credentials: &CredentialSet,
+    session: Option<&str>,
+) -> reqwest::RequestBuilder {
+    // Streamable HTTP lets the server pick its response encoding; accept both.
+    let mut req = credentialed(state.http.post(&mcp.backend), mcp, credentials)
+        .header(header::ACCEPT, "application/json, text/event-stream");
     if let Some(id) = session {
         req = req.header(SESSION_HEADER, id);
     }
@@ -150,7 +198,12 @@ async fn call_tool(
     // A tool answers in text; this one's text is the GraphQL response.
     let text = tool_text(&result).context("backend returned no text content")?;
     let parsed: Value = serde_json::from_str(&text).context("backend returned unparseable JSON")?;
-    if let Some(errors) = parsed.get("errors").and_then(Value::as_array)
+    graphql_data(parsed)
+}
+
+/// The `data` of a GraphQL response, surfacing the first error if it failed.
+fn graphql_data(response: Value) -> Result<Value> {
+    if let Some(errors) = response.get("errors").and_then(Value::as_array)
         && !errors.is_empty()
     {
         bail!(
@@ -161,7 +214,7 @@ async fn call_tool(
                 .unwrap_or("query failed")
         );
     }
-    parsed
+    response
         .get("data")
         .cloned()
         .context("query returned no data")

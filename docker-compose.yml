@@ -116,7 +116,7 @@ services:
     build:
       context: .
       dockerfile: deploy/caldav-mcp.Dockerfile
-    command: ["mcp", "--http", "0.0.0.0:8080"]
+    command: ["mcp", "--http", "0.0.0.0:8080", "--graphql"]
     expose:
       - "8080"
 

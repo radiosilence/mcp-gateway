@@ -11,7 +11,7 @@ use axum::extract::{Form, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::auth::routes::current_session;
 use crate::error::{AppError, AppResult};
@@ -279,7 +279,7 @@ pub async fn field_options(
     };
 
     match crate::backend::graphql(&state, mcp, &credentials, query).await {
-        Ok(data) => Ok(Json(data.get("options").cloned().unwrap_or(json!([]))).into_response()),
+        Ok(data) => Ok(Json(options_of(&data)).into_response()),
         Err(e) => {
             // Wrong password, backend down, a calendar server having a bad day:
             // the user's own error text is more use than a 500.
@@ -287,6 +287,32 @@ pub async fn field_options(
             Ok(Json(json!({"error": e.to_string()})).into_response())
         }
     }
+}
+
+/// The options a registry query returned, as a flat array.
+///
+/// A query may alias a plain list straight to `options`, or land on a Relay
+/// connection — `caldav-cli` returns one for every collection — in which case
+/// the rows are a level down. Both are unwrapped here so the registry stays a
+/// query and nothing else.
+fn options_of(data: &Value) -> Value {
+    let options = match data.get("options") {
+        Some(options) => options,
+        None => return json!([]),
+    };
+    if options.is_array() {
+        return options.clone();
+    }
+    if let Some(nodes) = options.get("nodes").filter(|n| n.is_array()) {
+        return nodes.clone();
+    }
+    if let Some(edges) = options.get("edges").and_then(Value::as_array) {
+        return edges
+            .iter()
+            .filter_map(|e| e.get("node").cloned())
+            .collect();
+    }
+    json!([])
 }
 
 pub async fn delete_credential(
@@ -303,4 +329,33 @@ pub async fn delete_credential(
         .await
         .map_err(AppError::Internal)?;
     Ok(flash_redirect("Credentials deleted"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn takes_a_plain_aliased_list_as_it_comes() {
+        let data = json!({"options": [{"value": "a"}]});
+        assert_eq!(options_of(&data), json!([{"value": "a"}]));
+    }
+
+    #[test]
+    fn unwraps_a_relay_connection() {
+        let data = json!({"options": {"totalCount": 1, "nodes": [{"value": "Home"}]}});
+        assert_eq!(options_of(&data), json!([{"value": "Home"}]));
+
+        let edges = json!({"options": {"edges": [{"node": {"value": "Home"}}]}});
+        assert_eq!(options_of(&edges), json!([{"value": "Home"}]));
+    }
+
+    #[test]
+    fn anything_else_is_no_options_rather_than_an_error() {
+        assert_eq!(options_of(&json!({})), json!([]));
+        assert_eq!(
+            options_of(&json!({"options": {"totalCount": 0}})),
+            json!([])
+        );
+    }
 }

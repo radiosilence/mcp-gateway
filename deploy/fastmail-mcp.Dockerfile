@@ -1,17 +1,15 @@
-# Backend MCP: fastmail-cli in HTTP mode. Built from the branch until the
-# per-request-token change lands in a release (then pin a tag). This is the
-# heavy build (kreuzberg + bundled pdfium) — but it's a separate image, built
-# once, independent of the fast-iterating gateway.
+# Backend MCP: fastmail-cli in HTTP mode, pinned to a release tag — see the
+# caldav image for why a branch pin goes stale silently. This is the heavy build
+# (kreuzberg + bundled pdfium), but it's a separate image, built once,
+# independent of the fast-iterating gateway.
 
 FROM rust:1-bookworm AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang cmake pkg-config \
     && rm -rf /var/lib/apt/lists/*
-# Build from the rebinding-fix branch until it merges (#35), then switch to a
-# release tag (see the "release fastmail-cli + pin" step).
 RUN cargo install --locked \
     --git https://github.com/radiosilence/fastmail-cli \
-    --branch fix/mcp-http-rebinding \
+    --tag v3.1.2 \
     fastmail-cli
 
 FROM debian:bookworm-slim

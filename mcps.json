@@ -42,7 +42,7 @@
         "secret": false,
         "required": false,
         "hint": "Blank = whichever calendar your calendar app uses",
-        "options_query": "{ options: calendars(first: 100) { totalCount nodes { value: name label: name disabled: readOnly isDefault } } }",
+        "options_query": "{ options: calendars(first: 100) { nodes { value: id label: name disabled: readOnly isDefault supportsEvents } } }",
         "sync_mutation": "mutation($value: String!) { setDefaultCalendar(id: $value) { success error } }"
       }
     ],

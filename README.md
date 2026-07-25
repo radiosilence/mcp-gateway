@@ -179,7 +179,10 @@ calendars an account has, say. Alias the selection to `options { value label
 disabled isDefault }` and the dashboard needs no per-field mapping config; the
 query defines the shape. A Relay connection is unwrapped, so `options { nodes
 { … } }` works too — which is what `caldav-cli` returns, and why the shipped
-query passes `first: 100` (collections there default to 25). Such a field
+query passes `first: 100` (collections there default to 25). Key `value` to an
+id rather than a display name where the backend has one: two calendars can
+share a name, and picking between them by name is a coin flip. An option is
+offered unless `disabled` is true or it carries `supportsEvents: false`. Such a field
 appears only once the account is connected (there is nobody to ask before
 that), and is rejected at boot if marked `required`, since the connect form
 can't show it. It renders as a `<datalist>`, so a backend that's down costs

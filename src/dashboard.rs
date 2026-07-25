@@ -315,6 +315,70 @@ fn refused(data: &Value) -> Option<String> {
     }
 }
 
+#[derive(Deserialize)]
+pub struct FieldUpdate {
+    value: String,
+}
+
+/// Save one field on its own, then sync it upstream.
+///
+/// The calendar picker changes a single value and shouldn't demand the rest of
+/// the form back — least of all a password it is never shown. Restricted to
+/// non-secret fields for that reason: a secret can only be set where the user
+/// typed it.
+pub async fn set_field(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((mcp_id, field_id)): Path<(String, String)>,
+    Form(update): Form<FieldUpdate>,
+) -> AppResult<Response> {
+    let Some(session) = current_session(&state, &headers).await else {
+        return Err(AppError::BadRequest("not signed in".into()));
+    };
+    let Some(mcp) = state.config.mcp(&mcp_id) else {
+        return Err(AppError::BadRequest("unknown mcp".into()));
+    };
+    let Some(field) = mcp.fields.iter().find(|f| f.id == field_id) else {
+        return Err(AppError::BadRequest("unknown field".into()));
+    };
+    if field.secret {
+        return Err(AppError::BadRequest("not settable on its own".into()));
+    }
+    let value = update.value.trim();
+    if value.chars().any(|c| c.is_control()) {
+        return Err(AppError::BadRequest(
+            "value contains control characters".into(),
+        ));
+    }
+
+    // Merge into what's stored: everything else stays as it was.
+    let Some(stored) = state
+        .store
+        .get_credentials(&session.sub, &mcp_id, mcp.primary_field())
+        .await
+        .map_err(AppError::Internal)?
+    else {
+        return Err(AppError::BadRequest("no credentials stored".into()));
+    };
+    let mut values = stored.clone();
+    match value.is_empty() {
+        true => {
+            values.remove(&field_id);
+        }
+        false => {
+            values.insert(field_id.clone(), value.to_string());
+        }
+    }
+    state
+        .store
+        .set_credentials(&session.sub, &mcp_id, &values)
+        .await
+        .map_err(AppError::Internal)?;
+
+    let message = sync_upstream(&state, mcp, &values, Some(&stored)).await;
+    Ok(Json(json!({"saved": true, "message": message})).into_response())
+}
+
 /// Suggestions for one field, fetched from the backend with the user's own
 /// credentials — e.g. the calendars this account can write to.
 ///
@@ -405,6 +469,27 @@ pub async fn delete_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The picker's save, through the same extractor.
+    #[tokio::test]
+    async fn a_single_field_update_deserializes_from_a_urlencoded_body() {
+        use axum::body::Body;
+        use axum::extract::FromRequest;
+        use axum::http::{Request, header};
+
+        for (body, expected) in [("value=home", "home"), ("value=", "")] {
+            let request = Request::builder()
+                .method("POST")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap();
+            let Form(update) = Form::<FieldUpdate>::from_request(request, &())
+                .await
+                .expect("a field update must deserialize");
+            // An empty value is how "use the account's own default" arrives.
+            assert_eq!(update.value, expected);
+        }
+    }
 
     /// The dashboard's own form, through the extractor that rejected it in
     /// production: a wrapper type here is a 422 on every multi-field save.

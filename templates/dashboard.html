@@ -79,11 +79,18 @@
           {% for f in m.fields %}
           <label class="block">
             <span class="text-slate-500 dark:text-slate-400">{{ f.label }}{% if !f.required %} <span class="text-slate-400 dark:text-slate-500">(optional)</span>{% endif %}</span>
+            {% if !f.options_url.is_empty() %}
+            <select name="{{ f.id }}" data-options="{{ f.options_url }}" data-save="/dashboard/{{ m.id }}/field/{{ f.id }}"
+                    data-current="{{ f.value }}"
+                    class="mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none">
+              <option value="{{ f.value }}">{% if f.value.is_empty() %}Loading…{% else %}{{ f.value }}{% endif %}</option>
+            </select>
+            <span class="mt-1 block text-slate-400 dark:text-slate-500" data-status></span>
+            {% else %}
             <input type="{{ f.input_type }}" name="{{ f.id }}" placeholder="{{ f.placeholder }}"
                    value="{{ f.value }}" autocomplete="off" {% if f.required && !f.secret %}required{% endif %}
-                   {% if !f.options_url.is_empty() %}list="opts-{{ m.id }}-{{ f.id }}" data-options="{{ f.options_url }}"{% endif %}
                    class="mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none" />
-            {% if !f.options_url.is_empty() %}<datalist id="opts-{{ m.id }}-{{ f.id }}"></datalist>{% endif %}
+            {% endif %}
           </label>
           {% endfor %}
           <button type="submit" class="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">Save</button>
@@ -127,27 +134,57 @@
       });
     });
 
-    // Fill backend-populated fields (e.g. which calendars this account has).
-    // A datalist rather than a <select>: the input still accepts anything, so
-    // a backend that's down or slow costs suggestions, not the ability to type.
-    document.querySelectorAll('input[data-options]').forEach(function (input) {
-      var list = document.getElementById(input.getAttribute('list'));
-      fetch(input.getAttribute('data-options'), { credentials: 'same-origin' })
+    // Fill backend-populated fields (e.g. which calendars this account has) and
+    // save on pick — one choice shouldn't need the rest of the form, least of
+    // all a password the page never shows.
+    document.querySelectorAll('select[data-options]').forEach(function (select) {
+      var status = select.parentNode.querySelector('[data-status]');
+      var current = select.getAttribute('data-current') || '';
+
+      function say(text, bad) {
+        status.textContent = text || '';
+        status.className = 'mt-1 block ' + (bad ? 'text-amber-600 dark:text-amber-400'
+                                                : 'text-slate-400 dark:text-slate-500');
+      }
+
+      fetch(select.getAttribute('data-options'), { credentials: 'same-origin' })
         .then(function (r) { return r.json(); })
         .then(function (options) {
           if (!Array.isArray(options)) throw new Error(options && options.error);
-          options.filter(function (o) { return !o.disabled; }).forEach(function (o) {
-            var opt = document.createElement('option');
-            opt.value = o.value;
-            if (o.label && o.label !== o.value) opt.label = o.label;
-            list.appendChild(opt);
+          select.innerHTML = '';
+          // Nothing chosen means the account's own default applies, which is
+          // a real choice and has to be selectable again.
+          var fallback = options.find(function (o) { return o.isDefault; });
+          select.appendChild(new Option(
+            fallback ? 'Account default (' + fallback.label + ')' : 'Account default', ''));
+
+          options.forEach(function (o) {
+            // A read-only or task-only collection can be shown but not chosen:
+            // an event could never land in it.
+            if (o.disabled || o.supportsEvents === false) return;
+            var opt = new Option(o.label + (o.isDefault ? ' — account default' : ''), o.value);
+            // Values used to be calendar names; keep an old one selected.
+            if (o.value === current || o.label === current) opt.selected = true;
+            select.appendChild(opt);
           });
-          var current = options.find(function (o) { return o.isDefault; });
-          if (current && !input.value) input.placeholder = current.value + ' (account default)';
+          say('');
         })
         .catch(function (e) {
-          input.placeholder = 'Type a name — could not load the list' + (e.message ? ': ' + e.message : '');
+          say('Could not load calendars' + (e.message ? ': ' + e.message : ''), true);
         });
+
+      select.addEventListener('change', function () {
+        say('Saving…');
+        fetch(select.getAttribute('data-save'), {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'value=' + encodeURIComponent(select.value),
+        })
+          .then(function (r) { return r.ok ? r.json() : r.text().then(function (t) { throw new Error(t); }); })
+          .then(function (result) { say(result.message || 'Saved', !!result.message); })
+          .catch(function (e) { say('Not saved: ' + e.message, true); });
+      });
     });
   </script>
 </body>

@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use axum::Router;
-use axum::routing::{any, get, post};
+use axum::routing::{any, get, patch, post};
 use tower_governor::GovernorLayer;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::key_extractor::SmartIpKeyExtractor;
@@ -126,7 +126,7 @@ async fn main() -> Result<()> {
         )
         .route(
             "/dashboard/{mcp_id}/field/{field_id}",
-            post(dashboard::set_field),
+            patch(dashboard::set_field),
         )
         .route(
             "/dashboard/{mcp_id}/delete",

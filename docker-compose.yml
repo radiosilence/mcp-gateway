@@ -98,24 +98,33 @@ services:
       caldav-mcp:
         condition: service_started
 
-  # A backend MCP: fastmail-cli in HTTP mode. The gateway proxies /mcp/fastmail
-  # here and injects X-Fastmail-Token. Internal only — no host port.
+  # A backend MCP: fastmail-cli in HTTP mode. The gateway proxies /fastmail here
+  # and injects X-Fastmail-Token. Internal only — no host port.
+  #
+  # The published image: the CLI repos build their own multi-arch images, so
+  # building them again here was a second definition of the same thing.
+  #
+  # `main` rather than a version, because this is the dev loop — you want what
+  # just landed. Production pins exact versions instead. `pull_policy: always`
+  # because a floating tag on its own doesn't refresh: compose reuses whatever
+  # it pulled first, which is the same silent staleness a cached build layer
+  # gives you. Swap to `:latest` for the newest release instead of the newest
+  # commit.
   fastmail-mcp:
-    build:
-      context: .
-      dockerfile: deploy/fastmail-mcp.Dockerfile
+    image: ghcr.io/radiosilence/fastmail-cli:main
+    pull_policy: always
     command: ["mcp", "--http", "0.0.0.0:8080"]
     expose:
       - "8080"
 
-  # A backend MCP: caldav-cli in HTTP mode. The gateway proxies /caldav here and
-  # injects X-CalDAV-Username/-Password/-Url. CalDAV needs three values rather
-  # than one bearer token, which is why the registry entry uses `fields`.
+  # A backend MCP: caldav-cli in HTTP mode, serving GraphQL alongside so the
+  # dashboard can list an account's calendars. The gateway proxies /caldav here
+  # and injects X-CalDAV-Username/-Password/-Url/-Calendar — CalDAV needs
+  # several values rather than one bearer token, hence `fields` in the registry.
   # Internal only — no host port.
   caldav-mcp:
-    build:
-      context: .
-      dockerfile: deploy/caldav-mcp.Dockerfile
+    image: ghcr.io/radiosilence/caldav-cli:main
+    pull_policy: always
     command: ["mcp", "--http", "0.0.0.0:8080", "--graphql"]
     expose:
       - "8080"

@@ -14,7 +14,11 @@ jaritanet; keep the shape here.
 | `hydra-migrate` | `oryd/hydra:v2.2.0` | one-shot `migrate sql` before Hydra serves |
 | `hydra` | `oryd/hydra:v2.2.0` | the OAuth AS; public :4444, admin :4445 |
 | `gateway` | built from `Dockerfile` | the gateway (lean Rust); :8080; mounts `mcps.json` |
-| `fastmail-mcp` | built from `deploy/fastmail-mcp.Dockerfile` | backend MCP (`fastmail-cli mcp --http`); internal :8080 |
+| `fastmail-mcp` | `ghcr.io/radiosilence/fastmail-cli` | backend MCP (`mcp --http`); internal :8080 |
+| `caldav-mcp` | `ghcr.io/radiosilence/caldav-cli` | backend MCP (`mcp --http --graphql`); internal :8080 |
+
+Backend images come from the CLI repos, which publish multi-arch builds on
+release — the same images production pulls. This repo builds only the gateway.
 
 Each additional MCP is another backend pod + a `mcps.json` entry. The registry
 (`mcps.json`) is a ConfigMap in prod (`MCP_REGISTRY` points at the mount).

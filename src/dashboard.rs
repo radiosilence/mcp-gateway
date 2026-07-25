@@ -68,8 +68,11 @@ pub struct FlashQuery {
 
 /// The credential form posts one input per configured field, so the shape
 /// isn't known at compile time.
-#[derive(Deserialize)]
-pub struct CredentialForm(HashMap<String, String>);
+///
+/// A plain map, not a newtype around one: `serde_urlencoded` presents a form
+/// body as a map and has no `deserialize_newtype_struct` to unwrap it, so a
+/// wrapper is rejected at the extractor with "invalid type: map".
+pub type CredentialForm = HashMap<String, String>;
 
 fn flash_redirect(msg: &str) -> Response {
     let enc: String = url::form_urlencoded::byte_serialize(msg.as_bytes()).collect();
@@ -198,7 +201,7 @@ pub async fn set_credential(
 
     let mut values = CredentialSet::new();
     for field in &mcp.fields {
-        let raw = form.0.get(&field.id).map(String::as_str).unwrap_or("");
+        let raw = form.get(&field.id).map(String::as_str).unwrap_or("");
         let value = raw.trim();
         if value.is_empty() {
             // A blank secret means "leave it alone" — it is never rendered
@@ -334,6 +337,29 @@ pub async fn delete_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dashboard's own form, through the extractor that rejected it in
+    /// production: a wrapper type here is a 422 on every multi-field save.
+    #[tokio::test]
+    async fn the_credential_form_deserializes_from_a_urlencoded_body() {
+        use axum::body::Body;
+        use axum::extract::FromRequest;
+        use axum::http::{Request, header};
+
+        let request = Request::builder()
+            .method("POST")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from("username=jc%40blit.cc&password=pw&url="))
+            .unwrap();
+
+        let Form(form) = Form::<CredentialForm>::from_request(request, &())
+            .await
+            .expect("a form body must deserialize");
+        assert_eq!(form.get("username").map(String::as_str), Some("jc@blit.cc"));
+        assert_eq!(form.get("password").map(String::as_str), Some("pw"));
+        // A cleared optional field arrives as an empty value, not as absent.
+        assert_eq!(form.get("url").map(String::as_str), Some(""));
+    }
 
     #[test]
     fn takes_a_plain_aliased_list_as_it_comes() {

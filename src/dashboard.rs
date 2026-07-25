@@ -46,6 +46,9 @@ struct McpView {
     id: String,
     name: String,
     has_credential: bool,
+    /// Whether any field is a setting rather than a credential — shown outside
+    /// the credential form, since that is not what it is.
+    has_settings: bool,
     updated_at: String,
     connector_url: String,
     claude_code_cmd: String,
@@ -124,7 +127,7 @@ pub async fn dashboard(
             None
         };
 
-        let fields = m
+        let fields: Vec<FieldView> = m
             .fields
             .iter()
             .map(|f| FieldView {
@@ -162,6 +165,7 @@ pub async fn dashboard(
                 "claude mcp add --transport http --scope user {} {}",
                 m.id, connector_url
             ),
+            has_settings: fields.iter().any(|f| !f.options_url.is_empty()),
             id: m.id.clone(),
             name: m.name.clone(),
             has_credential,
@@ -202,42 +206,18 @@ pub async fn set_credential(
 
     let mut values = CredentialSet::new();
     for field in &mcp.fields {
-        let raw = form.get(&field.id).map(String::as_str).unwrap_or("");
-        let value = raw.trim();
-        if value.is_empty() {
-            // A blank secret means "leave it alone" — it is never rendered
-            // back, so the user couldn't have retyped it to change one of the
-            // other fields. A blank non-secret was visibly cleared on purpose.
-            if field.secret
-                && let Some(prev) = stored.as_ref().and_then(|s| s.get(&field.id))
-                && !prev.is_empty()
-            {
-                values.insert(field.id.clone(), prev.clone());
-                continue;
+        let submitted = form.get(&field.id).map(String::as_str);
+        let stored_value = stored
+            .as_ref()
+            .and_then(|s| s.get(&field.id))
+            .map(String::as_str);
+        match resolve_field(field, submitted, stored_value) {
+            Ok(Some(value)) => {
+                values.insert(field.id.clone(), value);
             }
-            // An optional field left blank falls back to the configured
-            // default, if there is one, and is otherwise simply not stored.
-            match (field.required, field.default.as_deref()) {
-                (true, _) => {
-                    return Ok(flash_redirect(&format!("{} cannot be empty", field.label)));
-                }
-                (false, Some(default)) => {
-                    values.insert(field.id.clone(), default.to_string());
-                }
-                (false, None) => {}
-            }
-            continue;
+            Ok(None) => {}
+            Err(complaint) => return Ok(flash_redirect(&complaint)),
         }
-        // These become header values downstream. Reject control characters
-        // here, where we can tell the user, rather than dropping them silently
-        // at proxy time.
-        if value.chars().any(|c| c.is_control()) {
-            return Ok(flash_redirect(&format!(
-                "{} contains characters that can't be sent",
-                field.label
-            )));
-        }
-        values.insert(field.id.clone(), value.to_string());
     }
 
     state
@@ -320,12 +300,58 @@ pub struct FieldUpdate {
     value: String,
 }
 
-/// Save one field on its own, then sync it upstream.
+/// What to store for one field, given what the form sent and what we already
+/// hold. `Ok(None)` stores nothing; `Err` is the complaint to show the user.
 ///
-/// The calendar picker changes a single value and shouldn't demand the rest of
-/// the form back — least of all a password it is never shown. Restricted to
-/// non-secret fields for that reason: a secret can only be set where the user
-/// typed it.
+/// The distinction that matters is absent versus empty. A field the form never
+/// carried — the calendar picker saves itself, so it isn't in the credential
+/// form — must keep its stored value; treating that as "cleared" would wipe it
+/// on every unrelated save.
+fn resolve_field(
+    field: &crate::config::CredentialField,
+    submitted: Option<&str>,
+    stored: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(value) = submitted.map(str::trim) else {
+        return Ok(stored.map(str::to_string));
+    };
+
+    if !value.is_empty() {
+        // These become header values downstream. Reject control characters
+        // here, where we can tell the user, rather than dropping them silently
+        // at proxy time.
+        if value.chars().any(|c| c.is_control()) {
+            return Err(format!(
+                "{} contains characters that can't be sent",
+                field.label
+            ));
+        }
+        return Ok(Some(value.to_string()));
+    }
+
+    // A blank secret means "leave it alone" — it is never rendered back, so the
+    // user couldn't have retyped it to change one of the other fields. A blank
+    // non-secret was visibly cleared on purpose.
+    if field.secret
+        && let Some(prev) = stored.filter(|p| !p.is_empty())
+    {
+        return Ok(Some(prev.to_string()));
+    }
+    // An optional field left blank falls back to the configured default, if
+    // there is one, and is otherwise simply not stored.
+    match (field.required, field.default.as_deref()) {
+        (true, _) => Err(format!("{} cannot be empty", field.label)),
+        (false, Some(default)) => Ok(Some(default.to_string())),
+        (false, None) => Ok(None),
+    }
+}
+
+/// Patch one field, then sync it upstream.
+///
+/// A setting is not a credential: changing which calendar new events go to
+/// shouldn't demand the rest of the form back, least of all a password the
+/// page never shows. Restricted to non-secret fields for that reason — a
+/// secret can only be set where the user typed it.
 pub async fn set_field(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -469,6 +495,60 @@ pub async fn delete_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn field(id: &str, secret: bool, required: bool) -> crate::config::CredentialField {
+        serde_json::from_value(json!({
+            "id": id, "label": id, "header": format!("X-{id}"),
+            "secret": secret, "required": required,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_field_the_form_never_carried_keeps_what_is_stored() {
+        // The calendar picker saves itself, so it isn't in the credential form.
+        // Reading absent as "cleared" would wipe it on every unrelated save.
+        let setting = field("calendar", false, false);
+        assert_eq!(
+            resolve_field(&setting, None, Some("home")),
+            Ok(Some("home".into()))
+        );
+        assert_eq!(resolve_field(&setting, None, None), Ok(None));
+    }
+
+    #[test]
+    fn a_blank_secret_keeps_the_stored_one() {
+        let password = field("password", true, true);
+        assert_eq!(
+            resolve_field(&password, Some(""), Some("hunter2")),
+            Ok(Some("hunter2".into()))
+        );
+        // Nothing stored to keep, and it's required: say so rather than store "".
+        assert!(resolve_field(&password, Some(""), None).is_err());
+    }
+
+    #[test]
+    fn a_visibly_cleared_setting_is_cleared() {
+        // Non-secret and present-but-empty: the user emptied a box they could see.
+        let setting = field("calendar", false, false);
+        assert_eq!(resolve_field(&setting, Some(""), Some("home")), Ok(None));
+    }
+
+    #[test]
+    fn a_cleared_optional_falls_back_to_its_default() {
+        let mut url = field("url", false, false);
+        url.default = Some("https://caldav.icloud.com".into());
+        assert_eq!(
+            resolve_field(&url, Some(""), Some("https://other.test")),
+            Ok(Some("https://caldav.icloud.com".into()))
+        );
+    }
+
+    #[test]
+    fn a_value_that_could_not_be_sent_as_a_header_is_refused() {
+        let setting = field("calendar", false, false);
+        assert!(resolve_field(&setting, Some("we\nird"), None).is_err());
+    }
 
     /// The picker's save, through the same extractor.
     #[tokio::test]

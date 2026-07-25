@@ -210,7 +210,10 @@ wrapped in a tool result, as a string. MCP is a tool-call protocol for models;
 between two services it is all envelope.
 
 Editing a connected MCP leaves secrets blank to keep the stored value —
-otherwise changing one field would mean retyping the app password.
+otherwise changing one field would mean retyping the app password. A field the
+form never carried keeps its stored value too, which is what stops a credential
+save from wiping a setting that saves itself elsewhere; only a visibly-cleared
+non-secret is treated as cleared.
 
 Set `credential_header` **or** `fields`, never both. The dashboard builds its
 form from whichever is present, and the proxy strips every declared header from

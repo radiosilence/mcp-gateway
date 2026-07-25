@@ -72,11 +72,19 @@ pub async fn handle(
 
     // Inject the user's credentials for this MCP (absent is not fatal — the
     // backend returns its own "not configured" error the model can relay).
-    match state
-        .store
-        .get_credentials(&sub, &id, mcp.primary_field())
-        .await
-    {
+    //
+    // A public MCP stores nothing, so the lookup is skipped rather than left to
+    // return `None` — a credential-less backend should never touch the
+    // credential store at all.
+    match match mcp.is_public() {
+        true => Ok(None),
+        false => {
+            state
+                .store
+                .get_credentials(&sub, &id, mcp.primary_field())
+                .await
+        }
+    } {
         Ok(Some(values)) => {
             for field in &mcp.fields {
                 let Some(value) = values.get(&field.id).filter(|v| !v.is_empty()) else {
@@ -95,7 +103,8 @@ pub async fn handle(
                 }
             }
         }
-        Ok(None) => tracing::debug!(%sub, mcp = %id, "no credential stored"),
+        Ok(None) if !mcp.is_public() => tracing::debug!(%sub, mcp = %id, "no credential stored"),
+        Ok(None) => {}
         Err(e) => tracing::error!(error = %e, "credential lookup failed"),
     }
 

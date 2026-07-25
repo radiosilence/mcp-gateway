@@ -21,9 +21,22 @@ every MCP, the gateway centralizes it:
 
 The OAuth token proves *who you are*; it is never the MCP's key.
 
-Two MCPs ship in the registry today: **Fastmail** (mail and contacts, one API
-token) and **Calendar** (CalDAV — iCloud by default, username + app password +
-server URL).
+Three MCPs ship in the registry today: **Fastmail** (mail and contacts, one API
+token), **Calendar** (CalDAV — iCloud by default, username + app password +
+server URL), and **Folk** (the Mainly Norfolk English folk archive — no
+credentials at all).
+
+Folk is the first *public* MCP: it reads a public website, so there is nothing
+to authenticate to and nothing to store. It appears on the dashboard already
+connected, with a connector URL and no form. Public is opt-in via
+`"public": true` in the registry rather than inferred from an absent
+`credential_header` — an MCP that declares no credentials is far more often a
+typo than a decision, and the gateway should not quietly front an unauthenticated
+backend because someone missed a line of JSON.
+
+The OAuth login still applies: it establishes who the user is before the
+gateway proxies anything. Public means *this backend needs no key of its own*,
+not that the route is open.
 
 ## Architecture
 

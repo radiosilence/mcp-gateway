@@ -141,6 +141,15 @@ services:
     expose:
       - "8080"
 
+  # TfL takes no key to work — anonymous callers get 50 requests/minute of the
+  # same data — so it comes up usable and the key field only raises the limit.
+  tfl-mcp:
+    image: ghcr.io/radiosilence/tfl-cli:main
+    pull_policy: always
+    command: ["mcp", "--http", "0.0.0.0:8080", "--graphql"]
+    expose:
+      - "8080"
+
   # Opt-in tunnel for Claude-connector testing. Don't run this directly — use
   # `mise run tunnel`, which provisions the tunnel + DNS, writes
   # cloudflared/{config.yml,creds.json} (gitignored, mounted below), and brings

@@ -5,7 +5,7 @@
     "backend": "http://fastmail-mcp:8080/mcp",
     "credential_header": "X-Fastmail-Token",
     "key_help_url": "https://app.fastmail.com/settings/security/tokens",
-    "key_hint": "fmu1-…"
+    "key_hint": "fmu1-\u2026"
   },
   {
     "id": "caldav",
@@ -54,5 +54,22 @@
     "backend": "http://folk-mcp:8080/mcp",
     "public": true,
     "graphql": "http://folk-mcp:8080/graphql"
+  },
+  {
+    "id": "tfl",
+    "name": "TfL (London transport)",
+    "backend": "http://tfl-mcp:8080/mcp",
+    "graphql": "http://tfl-mcp:8080/graphql",
+    "key_help_url": "https://api-portal.tfl.gov.uk/profile",
+    "fields": [
+      {
+        "id": "app_key",
+        "label": "TfL app key (optional \u2014 raises the rate limit)",
+        "header": "X-Tfl-App-Key",
+        "secret": true,
+        "required": false,
+        "hint": "32 hex characters"
+      }
+    ]
   }
 ]

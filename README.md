@@ -190,9 +190,16 @@ suggestions, not the ability to type a name.
 
 `sync_mutation` keeps the backend's own idea of a setting in step with ours —
 picking a calendar here also points the account's default at it
-(`setDefaultCalendar`), so the user's phone agrees with the gateway. It runs
-only when the value changed, and the value is passed as a variable rather than
-interpolated, since a calendar named `"` would otherwise rewrite the mutation.
+(`setDefaultCalendar`, which writes RFC 6638's
+`schedule-default-calendar-URL`). It runs only when the value changed, and the
+value is passed as a variable rather than interpolated, since a calendar named
+`"` would otherwise rewrite the mutation.
+
+How far that reaches is the server's business. It is the only account-wide
+notion of a default CalDAV has, and `caldav-cli` honours it — but a client is
+free to keep its own preference instead, and Apple's Calendar apps appear to:
+changing the default there leaves the server property untouched. So treat the
+sync as telling the account, not as reaching every device reading it.
 
 **Our stored value is authoritative.** It is what the proxy injects on every
 request, so the gateway behaves as asked whether or not the backend accepted

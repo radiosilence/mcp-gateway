@@ -48,7 +48,7 @@ const APP_CSS: &str = include_str!("../assets/app.css");
 const APP_JS: &str = include_str!("../assets/app.js");
 /// Vendored rather than fetched: same reasoning as the rest, and a pinned copy
 /// in the tree is also the only version anyone can be served.
-const HTMX_JS: &str = include_str!("../assets/htmx.min.js");
+const HTMX_JS: &str = include_str!("../assets/htmx.esm.min.js");
 
 async fn app_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
@@ -189,7 +189,7 @@ async fn main() -> Result<()> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
-        .route("/assets/htmx.min.js", get(htmx_js))
+        .route("/assets/htmx.esm.min.js", get(htmx_js))
         .route("/login", get(auth::routes::login))
         .route("/logout", get(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
@@ -276,5 +276,10 @@ mod tests {
             APP_JS.contains("data-copy"),
             "app.js is not the real script"
         );
+        // The module entry has to pull htmx in, and htmx has to be the module
+        // build — a classic script imported this way exports nothing and
+        // silently never initialises.
+        assert!(APP_JS.contains(r#"import "/assets/htmx.esm.min.js""#));
+        assert!(HTMX_JS.contains("export default htmx"), "not the esm build");
     }
 }

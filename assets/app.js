@@ -1,3 +1,8 @@
+// htmx, vendored. Imported rather than script-tagged so there is one entry
+// point and no global; an absolute specifier because a bare one would need
+// an import map, and those are inline script the CSP refuses.
+import "/assets/htmx.esm.min.js";
+
 // Loaded as a module, so it runs after parsing and needs no ready handler.
 
 // Copy buttons: the value rides on the element, so one listener covers however

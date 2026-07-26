@@ -20,11 +20,23 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   any more, in exchange for the shaping being somewhere it can be read and
   tested.
 
-- **htmx 2.0.10 is vendored, not fetched.** Same reasoning as the stylesheet, and a
-  pinned copy in the tree is the only version anyone can be served. No
-  `hx-on:` attributes anywhere: those build functions at runtime, which the
-  content-security-policy refuses, and quietly adding `unsafe-eval` to make one
-  work would undo most of what the policy is for.
+- **htmx 4.0.0-beta6 is vendored and imported as a module.** Vendored for the
+  same reason as the stylesheet — a CDN script on this page can read credentials
+  as they are typed, and our own policy would block it anyway. Imported rather
+  than script-tagged so there is one entry point and no global; by absolute path
+  rather than by name, because a bare specifier needs an import map and those
+  are inline script the policy also refuses.
+
+  A beta deliberately: v4 keeps every attribute this uses (`hx-patch`,
+  `hx-target` with `find`/`next`, the `change` default on a select, a select's
+  value in the request), so the choice is between a beta and porting later. What
+  it does *not* keep is the v2 response-header protocol — `HX-Retarget`,
+  `HX-Reswap`, `HX-Redirect` and the rest are gone — which is why nothing here
+  depends on one.
+
+  No `hx-on:` attributes anywhere: those build functions at runtime, which the
+  policy refuses, and quietly adding `unsafe-eval` to make one work would undo
+  most of what it is for.
 
 ## [0.1.2] - 2026-07-26
 

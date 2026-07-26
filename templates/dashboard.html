@@ -80,15 +80,15 @@
       {% if m.has_settings %}
       <div class="mt-4 space-y-3">
         {% for f in m.fields %}{% if !f.options_url.is_empty() %}
-        <label class="block"
-               hx-get="{{ f.options_url }}" hx-trigger="load" hx-target="find select" hx-swap="innerHTML">
+        <label class="block">
           <span class="text-xs text-slate-500 dark:text-slate-400">{{ f.label }}</span>
-          <select name="value"
-                  hx-patch="/dashboard/{{ m.id }}/field/{{ f.id }}" hx-trigger="change"
-                  hx-target="next [data-status]" hx-swap="outerHTML"
-                  class="mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none [.htmx-request_&]:animate-pulse [.htmx-request_&]:text-transparent">
-            {#- Not the value: it is an id, and would flash as a UUID. -#}
-            <option value="{{ f.value }}">Loading…</option>
+          {#- A select rather than a bar, so the skeleton and the control it
+              becomes are the same element with the same classes and cannot
+              differ in height. Replaced outright once the choices arrive. -#}
+          <select hx-get="{{ f.options_url }}" hx-trigger="load" hx-swap="outerHTML"
+                  aria-busy="true" tabindex="-1"
+                  class="mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none pointer-events-none appearance-none animate-pulse text-transparent">
+            <option>&nbsp;</option>
           </select>
           <span class="mt-1 block text-xs text-slate-400 dark:text-slate-500" data-status></span>
         </label>

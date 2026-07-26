@@ -14,10 +14,12 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and while the request is in flight the control pulses with its text
   transparent, so it is a shape rather than a word one has to read and discard.
 
-  Done with CSS keyed off the `htmx-request` class, which htmx adds to the
-  requesting element and removes once the swap lands. That leaves nothing to
-  undo afterwards — necessary here, because the content-security-policy rules
-  out the `hx-on:` handler that would otherwise do it.
+  The skeleton is a `<select>` with the control's own classes, so the two cannot
+  differ in height and nothing reflows when the choices land. It is replaced
+  outright rather than filled in, which also means the placeholder is a skeleton
+  from first paint — keyed off a request-in-flight class it would have shown
+  plain text until htmx started, which is exactly the moment it is meant to
+  cover.
 
 ## [0.2.0] - 2026-07-26
 

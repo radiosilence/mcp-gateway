@@ -1,3 +1,5 @@
-{#- Swapped into the <select>, so it has to be an option — a message element
-     would be invalid there and simply not render. -#}
-<option value="">Could not load choices: {{ error }}</option>
+{#- Also replaces the skeleton, so it keeps the shape of a control rather than
+     leaving a gap where a setting used to be. -#}
+<select disabled class="mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none">
+  <option>Could not load choices: {{ error }}</option>
+</select>

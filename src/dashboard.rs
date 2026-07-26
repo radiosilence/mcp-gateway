@@ -33,6 +33,8 @@ struct OptionView {
 #[derive(Template)]
 #[template(path = "field_options.html")]
 struct FieldOptionsTemplate {
+    mcp_id: String,
+    field_id: String,
     /// Label of the backend's own default, named in the placeholder so the
     /// empty choice says what it will actually do.
     account_default: Option<String>,
@@ -483,7 +485,12 @@ pub async fn field_options(
     let current = credentials.get(&field_id).cloned().unwrap_or_default();
 
     match crate::backend::graphql(&state, mcp, &credentials, query, None).await {
-        Ok(data) => Ok(options_fragment(&options_of(&data), &current)),
+        Ok(data) => Ok(options_fragment(
+            &options_of(&data),
+            &current,
+            &mcp_id,
+            &field_id,
+        )),
         Err(e) => {
             // Wrong password, backend down, a calendar server having a bad day:
             // the user's own error text is more use than a 500. Returning the
@@ -498,11 +505,16 @@ pub async fn field_options(
 
 /// The `<option>` list for a setting, with the entries the backend marked
 /// unusable dropped and the stored value preselected.
-fn options_fragment(options: &Value, current: &str) -> Response {
-    render(options_template(options, current))
+fn options_fragment(options: &Value, current: &str, mcp_id: &str, field_id: &str) -> Response {
+    render(options_template(options, current, mcp_id, field_id))
 }
 
-fn options_template(options: &Value, current: &str) -> FieldOptionsTemplate {
+fn options_template(
+    options: &Value,
+    current: &str,
+    mcp_id: &str,
+    field_id: &str,
+) -> FieldOptionsTemplate {
     let entries = options.as_array().cloned().unwrap_or_default();
     let account_default = entries
         .iter()
@@ -529,6 +541,8 @@ fn options_template(options: &Value, current: &str) -> FieldOptionsTemplate {
         .collect();
 
     FieldOptionsTemplate {
+        mcp_id: mcp_id.to_string(),
+        field_id: field_id.to_string(),
         account_default,
         options,
     }
@@ -606,7 +620,7 @@ mod tests {
             {"value": "tasks", "label": "Tasks", "supportsEvents": false},
             {"value": "home", "label": "Home"},
         ]);
-        let t = options_template(&data, "home");
+        let t = options_template(&data, "home", "caldav", "calendar");
 
         // The placeholder names the backend's own default so the empty choice
         // says what picking it will actually do.
@@ -619,9 +633,12 @@ mod tests {
         assert!(!t.options[0].selected);
         assert!(t.options[1].selected, "the stored value is preselected");
 
+        // The fragment replaces the skeleton outright, so it carries the
+        // control and must address the right endpoint itself.
         let html = t.render().unwrap();
         assert!(html.contains("— account default"));
         assert!(html.contains(r#"value="home" selected"#));
+        assert!(html.contains(r#"hx-patch="/dashboard/caldav/field/calendar""#));
     }
 
     /// A stored value that no longer exists upstream must not silently select
@@ -629,7 +646,7 @@ mod tests {
     #[test]
     fn nothing_is_preselected_when_the_stored_value_is_gone() {
         let data = json!([{"value": "home", "label": "Home"}]);
-        let t = options_template(&data, "deleted-calendar");
+        let t = options_template(&data, "deleted-calendar", "caldav", "calendar");
         assert!(t.options.iter().all(|o| !o.selected));
     }
 

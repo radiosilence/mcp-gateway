@@ -3,6 +3,16 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] (2026-07-26)
+
+### Changed
+
+- **LTO and codegen-units tuned for gateway workload.** Fat LTO with a single
+  codegen unit was the slowest possible build configuration, serializing
+  whole-program optimization across the whole dependency tree. The gateway is
+  I/O-bound — it proxies HTTP and talks to Postgres — and gains nothing
+  measurable from that cost. Thin LTO with 16 codegen units instead.
+
 ## [0.5.3] (2026-07-26)
 
 ### Changed

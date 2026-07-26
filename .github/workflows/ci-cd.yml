@@ -73,6 +73,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
+      # A transient registry timeout on one arch shouldn't cancel the other.
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
@@ -102,6 +104,8 @@ jobs:
     needs: [build-image, test, lint, format]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
+      # A transient registry timeout on one arch shouldn't cancel the other.
+      fail-fast: false
       matrix:
         include:
           - arch: amd64

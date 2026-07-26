@@ -45,6 +45,17 @@ pub struct TokenMeta {
     pub updated_at: time::OffsetDateTime,
 }
 
+impl TokenMeta {
+    /// RFC 3339 so the dashboard can drop it straight into a `<time
+    /// datetime>` and let the browser localise it; `OffsetDateTime`'s
+    /// `Display` is a debug-ish format not fit for showing to a user.
+    pub fn updated_at_rfc3339(&self) -> String {
+        self.updated_at
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| self.updated_at.to_string())
+    }
+}
+
 /// A user's values for one MCP, keyed by [`crate::config::CredentialField::id`].
 /// Ordered so the encrypted blob is stable across saves of the same values.
 pub type CredentialSet = std::collections::BTreeMap<String, String>;

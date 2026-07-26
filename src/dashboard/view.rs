@@ -286,8 +286,3 @@ pub(super) fn render<T: Template>(template: T) -> Response {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-}

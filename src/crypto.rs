@@ -1,4 +1,4 @@
-//! Envelope encryption for Fastmail tokens at rest.
+//! Envelope encryption for stored credentials at rest.
 //!
 //! We use XChaCha20-Poly1305 (24-byte random nonce, AEAD). The DB stores only
 //! `nonce || ciphertext`, base64-encoded. The 32-byte key lives in a k8s Secret

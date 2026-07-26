@@ -140,7 +140,7 @@ async fn initialize(
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {
-                    "name": "jaritanet-mcp-gateway",
+                    "name": "mcp-gateway",
                     "version": env!("CARGO_PKG_VERSION"),
                 },
             },

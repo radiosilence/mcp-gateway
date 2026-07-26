@@ -24,7 +24,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }} # radiosilence/jaritanet-mcp-gateway
+  IMAGE_NAME: ${{ github.repository }} # radiosilence/mcp-gateway
 
 jobs:
   test:
@@ -175,12 +175,12 @@ jobs:
           token: ${{ secrets.DEPLOYMENT_PAT }}
       - name: Bump mcpGateway image tag in jaritanet
         run: |
-          # Only bump if mcpGateway is already in jaritanet main — before PR #103
-          # merges, yq would *create* a stub (no repository/hostname) that fails
-          # jaritanet's config parse and breaks its deploy. Skip until then.
+          # Bail rather than let yq *create* a stub key: a mcpGateway block with
+          # no repository/hostname fails jaritanet's config parse and takes its
+          # whole deploy down.
           if ! yq -e '.config."jaritanet:mcpGateway"' "$CONFIG_PATH" >/dev/null 2>&1; then
-            echo "mcpGateway not in jaritanet main yet (PR #103 unmerged) — skipping."
-            exit 0
+            echo "no mcpGateway config in $DEPLOYMENT_REPO — refusing to create one."
+            exit 1
           fi
           yq eval '(.config."jaritanet:mcpGateway".image.tag) = strenv(SHA_TAG)' -i "$CONFIG_PATH"
           git config user.name "github-actions[bot]"

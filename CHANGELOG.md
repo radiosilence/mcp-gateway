@@ -3,6 +3,15 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- **This repo no longer deploys anything.** CI used to bump an image tag in the
+  deployment that runs the gateway, which meant holding a write credential for
+  someone else's repository — the implementation reaching into an instance.
+  Deployments now watch releases and decide when to move.
+
 ## [0.1.0] - 2026-07-26
 
 First release. The gateway ran unversioned until now, deployed by commit sha, so

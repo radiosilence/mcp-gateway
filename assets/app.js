@@ -25,10 +25,3 @@ document.addEventListener("submit", (e) => {
   const message = e.target.getAttribute("data-confirm");
   if (message && !confirm(message)) e.preventDefault();
 });
-
-// The server sends RFC 3339 so the page reads sensibly without scripting; this
-// swaps in the viewer's own locale and timezone.
-for (const el of document.querySelectorAll("time[datetime]")) {
-  const date = new Date(el.getAttribute("datetime"));
-  if (!isNaN(date)) el.textContent = date.toLocaleString();
-}

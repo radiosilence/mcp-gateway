@@ -50,7 +50,7 @@
       {% if m.public %}
       <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">No credentials needed. Add it to Claude:</p>
       {% else %}
-      <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Credentials set · updated <time datetime="{{ m.updated_at }}">{{ m.updated_at }}</time>. Add it to Claude:</p>
+      <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Credentials set · updated <time datetime="{{ m.updated_at }}" title="{{ m.updated_at }}">{{ m.updated_ago }}</time>. Add it to Claude:</p>
       {% endif %}
 
       <div class="mt-4 space-y-2">
@@ -82,14 +82,18 @@
         {% for f in m.fields %}{% if !f.options_url.is_empty() %}
         <label class="block">
           <span class="text-xs text-slate-500 dark:text-slate-400">{{ f.label }}</span>
-          {#- A select rather than a bar, so the skeleton and the control it
-              becomes are the same element with the same classes and cannot
-              differ in height. Replaced outright once the choices arrive. -#}
+          {%- if f.options_html.is_empty() %}
+          {#- The backend did not answer in time, so the choices come over htmx.
+              A select rather than a bar: same element and classes as what
+              replaces it, so the swap cannot change the height. -#}
           <select hx-get="{{ f.options_url }}" hx-trigger="load" hx-swap="outerHTML"
                   aria-busy="true" tabindex="-1"
-                  class="mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none pointer-events-none appearance-none animate-pulse text-transparent">
+                  class="mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none pointer-events-none animate-pulse text-transparent">
             <option>&nbsp;</option>
           </select>
+          {%- else %}
+          {{ f.options_html|safe }}
+          {%- endif %}
           <span class="mt-1 block text-xs text-slate-400 dark:text-slate-500" data-status></span>
         </label>
         {% endif %}{% endfor %}

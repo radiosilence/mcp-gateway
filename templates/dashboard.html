@@ -46,7 +46,7 @@
       </div>
 
       {% if m.has_credential %}
-      <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Credentials set · updated {{ m.updated_at }}. Add it to Claude:</p>
+      <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Credentials set · updated <time datetime="{{ m.updated_at }}">{{ m.updated_at }}</time>. Add it to Claude:</p>
 
       <div class="mt-4 space-y-2">
         <details class="rounded-lg ring-1 ring-inset ring-slate-200 dark:ring-slate-700 open:bg-slate-50 dark:open:bg-slate-800/50">
@@ -196,6 +196,15 @@
           .then(function (result) { say(result.message || 'Saved', !!result.message); })
           .catch(function (e) { say('Not saved: ' + e.message, true); });
       });
+    });
+  </script>
+
+  <script>
+    // Server renders RFC 3339 (readable, timezone-agnostic fallback); the
+    // browser swaps in the viewer's own locale and timezone where it can.
+    document.querySelectorAll('time[datetime]').forEach(function (el) {
+      var d = new Date(el.getAttribute('datetime'));
+      if (!isNaN(d)) el.textContent = d.toLocaleString();
     });
   </script>
 </body>

@@ -117,7 +117,7 @@ pub async fn dashboard(
         // is nothing to store, so nothing to wait for.
         let (has_credential, updated_at) = match (m.is_public(), meta) {
             (true, _) => (true, String::new()),
-            (false, Some(meta)) => (true, meta.updated_at.to_string()),
+            (false, Some(meta)) => (true, meta.updated_at_rfc3339()),
             (false, None) => (false, String::new()),
         };
 

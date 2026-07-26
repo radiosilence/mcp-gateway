@@ -16,7 +16,7 @@ mod view;
 
 use view::*;
 
-use options::{options_fragment, options_of, prefetch_options};
+use options::{fetch_choices, options_fragment, prefetch_options};
 
 use crate::auth::extract::{FragmentSession, PageSession};
 use crate::auth::routes::current_session;
@@ -322,24 +322,22 @@ pub async fn field_options(
     else {
         return Err(AppError::BadRequest("field has no options".into()));
     };
-    let Some(credentials) = state
-        .store
-        .get_credentials(&session.sub, &mcp_id, mcp.primary_field())
-        .await
-        .map_err(AppError::Internal)?
-    else {
-        return Err(AppError::BadRequest("no credentials stored".into()));
-    };
-
-    let current = credentials.get(&field_id).cloned().unwrap_or_default();
-
-    match crate::backend::graphql(&state, mcp, &credentials, query, None).await {
-        Ok(data) => Ok(options_fragment(
-            &options_of(&data),
-            &current,
-            &mcp_id,
-            &field_id,
-        )),
+    // Reaching here means the page's budget was missed, so this is where the
+    // slow half gets measured. The fast half reports from the prefetch.
+    let started = std::time::Instant::now();
+    match fetch_choices(&state, &session.sub, mcp, &field_id, query).await {
+        Ok(choices) => {
+            tracing::info!(
+                mcp = %mcp_id, field = %field_id, ms = started.elapsed().as_millis(),
+                "options loaded after the render budget"
+            );
+            Ok(options_fragment(
+                &choices.options,
+                &choices.current,
+                &mcp_id,
+                &field_id,
+            ))
+        }
         Err(e) => {
             // Wrong password, backend down, a calendar server having a bad day:
             // the user's own error text is more use than a 500. Returning the
@@ -492,29 +490,5 @@ mod tests {
         // A mutation that reports neither field is taken at its word.
         assert_eq!(refused(&json!({"setDefaultCalendar": {}})), None);
         assert_eq!(refused(&json!({})), None);
-    }
-
-    #[test]
-    fn takes_a_plain_aliased_list_as_it_comes() {
-        let data = json!({"options": [{"value": "a"}]});
-        assert_eq!(options_of(&data), json!([{"value": "a"}]));
-    }
-
-    #[test]
-    fn unwraps_a_relay_connection() {
-        let data = json!({"options": {"totalCount": 1, "nodes": [{"value": "Home"}]}});
-        assert_eq!(options_of(&data), json!([{"value": "Home"}]));
-
-        let edges = json!({"options": {"edges": [{"node": {"value": "Home"}}]}});
-        assert_eq!(options_of(&edges), json!([{"value": "Home"}]));
-    }
-
-    #[test]
-    fn anything_else_is_no_options_rather_than_an_error() {
-        assert_eq!(options_of(&json!({})), json!([]));
-        assert_eq!(
-            options_of(&json!({"options": {"totalCount": 0}})),
-            json!([])
-        );
     }
 }

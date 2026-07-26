@@ -2,3 +2,7 @@
      They already did once: a class on one and not the other changed the box
      model, and the swap visibly moved the page. -#}
 {% macro field_control() %}mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none{% endmacro %}
+
+{#- The line under a setting. One definition: the page renders it empty and a
+     save replaces it, and those drifting apart is how the last one broke. -#}
+{% macro field_status(text, bad) %}<span class="mt-1 block text-xs {% if bad %}text-amber-600 dark:text-amber-400{% else %}text-slate-400 dark:text-slate-500{% endif %}" data-status>{{ text }}</span>{% endmacro %}

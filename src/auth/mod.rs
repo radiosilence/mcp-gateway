@@ -3,6 +3,7 @@
 //! cookies. No JWTs reach any client.
 
 pub mod cookie;
+pub mod extract;
 pub mod github;
 pub mod hydra;
 pub mod routes;

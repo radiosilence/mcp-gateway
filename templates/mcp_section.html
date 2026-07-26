@@ -1,0 +1,119 @@
+{% import "controls.html" as ui %}
+{#- One MCP, rendered by the page and again on its own whenever a mutation
+     changes it, so the two cannot describe the same thing differently. -#}
+    <section class="mt-6 rounded-2xl bg-white dark:bg-slate-900 shadow-sm ring-1 ring-slate-200 dark:ring-slate-800 p-6">
+      {%- if !m.notice.text.is_empty() %}
+      <p class="mb-3 text-xs {% if m.notice.bad %}text-amber-600 dark:text-amber-400{% else %}text-emerald-600 dark:text-emerald-400{% endif %}">{{ m.notice.text }}</p>
+      {%- endif %}
+      <div class="flex items-center justify-between">
+        <h2 class="text-base font-semibold">{{ m.name }}</h2>
+        {% if m.has_credential %}
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-200 dark:ring-emerald-900">
+          <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> Connected
+        </span>
+        {% else %}
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-amber-50 dark:bg-amber-950/50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300 ring-1 ring-amber-200 dark:ring-amber-900">
+          <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span> Not configured
+        </span>
+        {% endif %}
+      </div>
+
+      {% if m.has_credential %}
+      {% if m.public %}
+      <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">No credentials needed. Add it to Claude:</p>
+      {% else %}
+      <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Credentials set · updated <time datetime="{{ m.updated_at }}" title="{{ m.updated_at }}">{{ m.updated_ago }}</time>. Add it to Claude:</p>
+      {% endif %}
+
+      <div class="mt-4 space-y-2">
+        <details class="rounded-lg ring-1 ring-inset ring-slate-200 dark:ring-slate-700 open:bg-slate-50 dark:open:bg-slate-800/50">
+          <summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-medium">Add to Claude (Desktop / web / mobile)</summary>
+          <div class="px-4 pb-4">
+            <p class="text-xs text-slate-500 dark:text-slate-400">Settings → Connectors → <b>Add custom connector</b>, paste this URL, and sign in when prompted:</p>
+            <div class="mt-2 flex items-center gap-2">
+              <code class="flex-1 rounded-md bg-slate-100 dark:bg-slate-800 px-3 py-2 font-mono text-xs ring-1 ring-inset ring-slate-200 dark:ring-slate-700 overflow-x-auto">{{ m.connector_url }}</code>
+              <button type="button" data-copy="{{ m.connector_url }}" class="copy shrink-0 rounded-md bg-slate-900 dark:bg-white px-3 py-2 text-xs font-medium text-white dark:text-slate-900 hover:opacity-90">Copy</button>
+            </div>
+          </div>
+        </details>
+
+        <details class="rounded-lg ring-1 ring-inset ring-slate-200 dark:ring-slate-700 open:bg-slate-50 dark:open:bg-slate-800/50">
+          <summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-medium">Add to Claude Code</summary>
+          <div class="px-4 pb-4">
+            <p class="text-xs text-slate-500 dark:text-slate-400">Run this — adds it user-scoped; Claude Code handles the sign-in on first use:</p>
+            <div class="mt-2 flex items-center gap-2">
+              <code class="flex-1 rounded-md bg-slate-100 dark:bg-slate-800 px-3 py-2 font-mono text-xs ring-1 ring-inset ring-slate-200 dark:ring-slate-700 overflow-x-auto">{{ m.claude_code_cmd }}</code>
+              <button type="button" data-copy="{{ m.claude_code_cmd }}" class="copy shrink-0 rounded-md bg-slate-900 dark:bg-white px-3 py-2 text-xs font-medium text-white dark:text-slate-900 hover:opacity-90">Copy</button>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      {% if m.has_settings %}
+      <div class="mt-4 space-y-3">
+        {% for f in m.fields %}{% if !f.options_url.is_empty() %}
+        <label class="block">
+          <span class="text-xs text-slate-500 dark:text-slate-400">{{ f.label }}</span>
+          {%- if f.options_html.is_empty() %}
+          {#- The backend did not answer in time, so the choices come over htmx.
+              A select rather than a bar: same element and classes as what
+              replaces it, so the swap cannot change the height. -#}
+          <select hx-get="{{ f.options_url }}" hx-trigger="load" hx-swap="outerHTML"
+                  aria-busy="true" tabindex="-1"
+                  class="{% call ui::field_control() %} pointer-events-none animate-pulse text-transparent">
+            <option>&nbsp;</option>
+          </select>
+          {%- else %}
+          {{ f.options_html|safe }}
+          {%- endif %}
+          <span class="mt-1 block text-xs text-slate-400 dark:text-slate-500" data-status></span>
+        </label>
+        {% endif %}{% endfor %}
+      </div>
+      {% endif %}
+
+      {% if !m.public %}
+      <details class="mt-4 text-xs">
+        <summary class="cursor-pointer select-none text-slate-500 hover:text-slate-900 dark:hover:text-white">Edit credentials</summary>
+        <form hx-post="/dashboard/{{ m.id }}/token" hx-target="closest section" hx-swap="outerHTML"
+              class="mt-2 space-y-2">
+          <p class="text-slate-500 dark:text-slate-400">Leave a password blank to keep the stored one.</p>
+          {% for f in m.fields %}{% if f.options_url.is_empty() %}
+          <label class="block">
+            <span class="text-slate-500 dark:text-slate-400">{{ f.label }}{% if !f.required %} <span class="text-slate-400 dark:text-slate-500">(optional)</span>{% endif %}</span>
+            <input type="{{ f.input_type }}" name="{{ f.id }}" placeholder="{{ f.placeholder }}"
+                   value="{{ f.value }}" autocomplete="off" {% if f.required && !f.secret %}required{% endif %}
+                   class="{% call ui::field_control() %}" />
+          </label>
+          {% endif %}{% endfor %}
+          <button type="submit" class="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">Save</button>
+        </form>
+      </details>
+
+      <form hx-post="/dashboard/{{ m.id }}/delete" hx-target="closest section" hx-swap="outerHTML"
+            class="mt-4" hx-confirm="Disconnect {{ m.name }}? This wipes your stored credentials.">
+        <button class="rounded-lg px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 ring-1 ring-inset ring-red-300 dark:ring-red-800/60 hover:bg-red-50 dark:hover:bg-red-950/40">Disconnect</button>
+      </form>
+      {% else %}
+      <p class="mt-4 text-xs text-slate-500 dark:text-slate-400">Reads a public archive — no credentials to enter, nothing stored.</p>
+      {% endif %}
+
+      {% else %}
+
+      {% if !m.key_help_url.is_empty() %}
+      <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Get credentials: <a class="underline" href="{{ m.key_help_url }}" target="_blank" rel="noreferrer">{{ m.key_help_url }}</a></p>
+      {% endif %}
+      <form hx-post="/dashboard/{{ m.id }}/token" hx-target="closest section" hx-swap="outerHTML"
+            class="mt-4 space-y-3">
+        {% for f in m.fields %}{% if !f.from_backend %}
+        <label class="block">
+          <span class="text-xs text-slate-500 dark:text-slate-400">{{ f.label }}{% if !f.required %} <span class="text-slate-400 dark:text-slate-500">(optional)</span>{% endif %}</span>
+          <input type="{{ f.input_type }}" name="{{ f.id }}" placeholder="{{ f.placeholder }}"
+                 value="{{ f.value }}" autocomplete="off" {% if f.required %}required{% endif %}
+                 class="{% call ui::field_control() %}" />
+        </label>
+        {% endif %}{% endfor %}
+        <button type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500">Connect</button>
+      </form>
+      {% endif %}
+    </section>

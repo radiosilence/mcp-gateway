@@ -7,15 +7,17 @@
       {%- endif %}
       <div class="flex items-center justify-between">
         <h2 class="text-base font-semibold">{{ m.name }}</h2>
-        {% if m.has_credential %}
-        <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-200 dark:ring-emerald-900">
-          <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> Connected
-        </span>
-        {% else %}
-        <span class="inline-flex items-center gap-1.5 rounded-full bg-amber-50 dark:bg-amber-950/50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300 ring-1 ring-amber-200 dark:ring-amber-900">
-          <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span> Not configured
-        </span>
-        {% endif %}
+        {%- if !m.has_credential %}
+        {% call ui::badge("bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 ring-amber-200 dark:ring-amber-900", "bg-amber-500", "Not configured") %}
+        {%- else if m.rejected %}
+        {% call ui::badge("bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 ring-red-200 dark:ring-red-900", "bg-red-500", "Credentials rejected") %}
+        {%- else if m.verified || m.public %}
+        {% call ui::badge("bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 ring-emerald-200 dark:ring-emerald-900", "bg-emerald-500", "Connected") %}
+        {%- else %}
+        {#- Stored, but nothing has confirmed it works. Said plainly rather than
+            shown as green, which would be a claim we cannot make. -#}
+        {% call ui::badge("bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 ring-slate-200 dark:ring-slate-700", "bg-slate-400", "Configured") %}
+        {%- endif %}
       </div>
 
       {% if m.has_credential %}
@@ -80,7 +82,7 @@
           <p class="text-slate-500 dark:text-slate-400">Leave a password blank to keep the stored one.</p>
           {% for f in m.fields %}{% if f.options_url.is_empty() %}
           <label class="block">
-            <span class="text-slate-500 dark:text-slate-400">{{ f.label }}{% if !f.required %} <span class="text-slate-400 dark:text-slate-500">(optional)</span>{% endif %}</span>
+            <span class="text-slate-500 dark:text-slate-400">{{ f.label }}{% if !f.required %} <span class="text-slate-400 dark:text-slate-500">(optional)</span>{% endif %}{% if f.is_set %} <span class="text-emerald-600 dark:text-emerald-400">· set</span>{% endif %}</span>
             <input type="{{ f.input_type }}" name="{{ f.id }}" placeholder="{{ f.placeholder }}"
                    value="{{ f.value }}" autocomplete="off" {% if f.required && !f.secret %}required{% endif %}
                    class="{% call ui::field_control() %}" />

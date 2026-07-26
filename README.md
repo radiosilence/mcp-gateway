@@ -160,6 +160,31 @@ service's environment, beside the backend services it names.
 `auth`, `login`, `logout`, `dashboard`, `healthz`, `.well-known` — are rejected
 at startup.)
 
+#### Saying whether the credentials actually work
+
+A stored credential is not a working one. An MCP can declare how to ask:
+
+```yaml
+verify:
+  query: "{ viewer { status } }"
+  path: viewer.status            # omit: answering without error is the answer
+  ok: CONNECTED                  # omit: any truthy value passes
+  rejected: INVALID_CREDENTIALS  # omit: nothing is ever called rejected
+```
+
+The dashboard then says which of four things is true — not configured, stored
+but unconfirmed, confirmed, or refused — instead of showing "connected" for
+anything it happens to hold.
+
+Backends report bad auth differently, so both shapes work. One that raises needs
+only `query`; one that answers calmly with a status names the values. **An error
+never counts as a rejection** — only an explicit `rejected` match does, because
+a server being unreachable is not evidence about a password, and telling someone
+to rotate a working credential is worse than saying nothing.
+
+Omit `verify` entirely and the gateway makes no claim, which is the right answer
+for a backend that authenticates nothing.
+
 #### MCPs that need more than one value
 
 `credential_header` is shorthand for the common single-token case. Not every

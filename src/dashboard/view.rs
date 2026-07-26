@@ -8,7 +8,7 @@ use axum::response::{Html, IntoResponse, Response};
 use serde_json::Value;
 
 use crate::config::Mcp;
-use crate::dashboard::options::options_template;
+use crate::dashboard::options::{Verified, options_template, verify};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::Session;
@@ -62,6 +62,10 @@ pub(super) struct FieldView {
     /// `password` or `text` — secrets are never rendered back into the page.
     pub(super) input_type: String,
     pub(super) secret: bool,
+    /// Whether something is stored for this field. A secret is never rendered
+    /// back, so without saying so there is no telling a set password from an
+    /// empty one.
+    pub(super) is_set: bool,
     pub(super) placeholder: String,
     /// Prefilled with the stored value when the field is not a secret (so a
     /// server URL can be edited, not retyped). Empty for secrets.
@@ -107,6 +111,10 @@ impl Notice {
 }
 
 pub(super) struct McpView {
+    /// Green claims a backend confirmed the credentials, so it is only ever set
+    /// when one actually did.
+    pub(super) verified: bool,
+    pub(super) rejected: bool,
     pub(super) notice: Notice,
     pub(super) id: String,
     pub(super) name: String,
@@ -198,6 +206,7 @@ impl McpView {
                         .cloned()
                         .unwrap_or_default(),
                 },
+                is_set: stored.as_ref().is_some_and(|s| s.contains_key(&f.id)),
                 input_type: if f.secret { "password" } else { "text" }.to_string(),
                 secret: f.secret,
                 // A default is advertised as a placeholder, not prefilled: the
@@ -218,6 +227,12 @@ impl McpView {
             })
             .collect();
 
+        // Only worth asking when there is something to ask about.
+        let checked = match has_credential && !m.is_public() {
+            true => verify(state, &session.sub, m).await,
+            false => Verified::Unknown,
+        };
+
         let connector_url = format!("{base}/{}", m.id);
         Ok(McpView {
             claude_code_cmd: format!(
@@ -228,6 +243,8 @@ impl McpView {
             id: m.id.clone(),
             name: m.name.clone(),
             has_credential,
+            verified: checked == Verified::Yes,
+            rejected: checked == Verified::Rejected,
             public: m.is_public(),
             updated_at,
             updated_ago,

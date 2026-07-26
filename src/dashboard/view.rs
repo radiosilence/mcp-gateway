@@ -178,7 +178,9 @@ impl McpView {
 
         // Non-secret values are read back so they can be edited in place;
         // secrets are never decrypted for rendering.
-        let stored = if has_credential && m.fields.iter().any(|f| !f.secret) {
+        // Fetched whenever anything is stored, not only when a visible field
+        // wants prefilling: a secret needs it too, to say that it is set.
+        let stored = if has_credential {
             state
                 .store
                 .get_credentials(&session.sub, &m.id, m.primary_field())
@@ -243,7 +245,9 @@ impl McpView {
             id: m.id.clone(),
             name: m.name.clone(),
             has_credential,
-            verified: checked == Verified::Yes,
+            // A backend with no check declared is taken at its word. Withholding
+            // green would imply a doubt we have no grounds for — we never asked.
+            verified: checked == Verified::Yes || m.verify.is_none(),
             rejected: checked == Verified::Rejected,
             public: m.is_public(),
             updated_at,
@@ -281,4 +285,9 @@ pub(super) fn render<T: Template>(template: T) -> Response {
             Html("<span data-status>Could not render</span>").into_response()
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 }

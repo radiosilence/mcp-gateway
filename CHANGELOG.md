@@ -1,0 +1,57 @@
+# Changelog
+
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
+versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2026-07-26
+
+First release. The gateway ran unversioned until now, deployed by commit sha, so
+this entry describes the shape it arrived at rather than replaying how it got
+there.
+
+### Added
+
+- **One OAuth login in front of many MCP servers.** Claude reaches
+  `https://<host>/<id>` for each MCP; the gateway is the OAuth resource server,
+  introspects the bearer at Hydra, looks up that user's credential for that MCP,
+  and reverse-proxies to a backend pod with the secret injected as a header.
+  Backends hold no auth of their own and link no gateway code — the alternative
+  was every MCP server growing its own OAuth, which is the same work N times.
+- **A registry that is configuration, not code.** `MCP_REGISTRY` carries the
+  whole registry as a YAML (or JSON) document: which MCPs exist, what each is
+  called, and what it needs from the user. Adding one is an entry, not a deploy
+  of new code, and the gateway ships no registry of its own — it belongs to
+  whoever runs it.
+- **Credentials that are not all bearer tokens.** An MCP declares
+  `credential_header` for the one-token case or `fields` for anything else;
+  CalDAV needs a username, an app password and a server URL, each injected into
+  its own header. Fields can be optional, carry defaults, and be marked
+  non-secret so the dashboard shows them for editing.
+- **Public MCPs.** `public: true` fronts something that needs no credentials at
+  all, and shows no connect form. Opt-in rather than inferred from an absent
+  credential block, because declaring none is far more often a typo than a
+  decision.
+- **Settings sourced from the backend.** A field can carry an `options_query`,
+  run against the backend's own GraphQL endpoint with the user's credentials, so
+  the dashboard offers a real list — your actual calendars — instead of asking
+  you to paste an identifier. A matching `sync_mutation` tells the backend what
+  was picked, best-effort: the gateway's stored value is what the proxy injects
+  and stays authoritative if the backend refuses.
+- **A dashboard** to connect, edit and disconnect each MCP, with per-client
+  instructions for Claude and Claude Code.
+
+### Security
+
+- **Login allowlist** (`GH_ALLOWED`). Dynamic client registration is public
+  because Claude requires it and consent is auto-granted, so the allowlist is
+  the thing standing between a stranger who registered a client and a token.
+- **Opaque access tokens**, introspected per request. No JWT reaches a client
+  and tokens are revocable at Hydra.
+- **Envelope encryption at rest** (XChaCha20-Poly1305). Stored credentials are
+  ciphertext; `TOKEN_ENC_KEY` is the only thing that opens them, and plaintext
+  never lands in the database.
+- **Server-side sessions.** Cookies carry an opaque id and nothing else, so no
+  state is forgeable by a client and a session dies when its row does.
+- Registry ids that would shadow a gateway route are rejected at startup, as are
+  header names that could not be sent — both would otherwise fail deep in the
+  proxy at request time.

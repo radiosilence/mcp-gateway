@@ -262,6 +262,18 @@ that same shape translated to whatever runs it. This repo holds no cluster
 manifests by design. See [`DEPLOY.md`](DEPLOY.md) for the prod deltas (domains,
 TLS, admin-not-exposed, secrets from the backend, opaque tokens).
 
+### Releases
+
+Images are published to `ghcr.io/radiosilence/mcp-gateway`, tagged `vX.Y.Z`,
+`vX.Y`, `vX` and `latest` for a release, and `main` / `sha-<short>` for every
+commit on main. Pin whichever you want to follow — a deployment wanting to know
+what changed should be on an exact version and read
+[`CHANGELOG.md`](CHANGELOG.md).
+
+Releasing is a version bump: change `version` in `Cargo.toml`, add the matching
+`CHANGELOG.md` entry, and merging cuts the tag, the GitHub release and the
+semver image tags. There is no tag to push by hand.
+
 ## Security model
 
 Built to be internet-facing. The load-bearing pieces:

@@ -1,18 +1,36 @@
-# The gateway is a lean axum app — it links no MCP, so no pdfium/kreuzberg
-# toolchain and a fast build. Templates (askama) and migrations (sqlx::migrate!)
-# are embedded; mcps.json is mounted at runtime.
+# CI builds the static musl binary; this image only copies it in.
+# `docker build .` by hand requires dist/ to be populated first. That is
+# intended: docker builds only ever happen in CI.
 
-FROM rust:1-bookworm AS build
-WORKDIR /app
-COPY . .
-RUN cargo build --release --locked
+FROM scratch
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=build /app/target/release/mcp-gateway /usr/local/bin/mcp-gateway
+ARG TARGETARCH
+
+# VALIDATED, DO NOT "SIMPLIFY" THIS AWAY:
+# rustls-platform-verifier requires a system trust store on Linux. It does NOT
+# fall back to the webpki roots compiled into the binary. With no CA bundle on
+# disk, reqwest panics before making a single request:
+#   Client::new(): reqwest::Error { kind: Builder,
+#     source: General("No CA certificates were loaded from the system") }
+# Verified by running the static binary on bare scratch against a real HTTPS
+# host: without this line it panics; with it, TLS completes and the server's
+# own auth response comes back. Sourced from distroless/static so we need no
+# package manager and no build stage — it is a plain copy from a published,
+# CVE-maintained image.
+COPY --from=gcr.io/distroless/static:latest \
+     /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+COPY dist/mcp-gateway-linux-${TARGETARCH}-musl /mcp-gateway
+
 EXPOSE 8080
 ENV BIND_ADDR=0.0.0.0:8080
-RUN useradd --system --uid 10001 --create-home app
-USER app
-ENTRYPOINT ["/usr/local/bin/mcp-gateway"]
+
+# scratch has no /etc/passwd, so this must be a raw numeric uid.
+USER 10001:10001
+
+LABEL org.opencontainers.image.title="mcp-gateway"
+LABEL org.opencontainers.image.vendor="James Cleveland"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.source="https://github.com/radiosilence/mcp-gateway"
+
+ENTRYPOINT ["/mcp-gateway"]

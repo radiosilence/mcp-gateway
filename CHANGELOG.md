@@ -3,6 +3,24 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-07-26
+
+### Fixed
+
+- **A settings dropdown flashed a raw identifier before it resolved.** Calendars
+  are keyed by id rather than name, deliberately — names are not unique — so the
+  stored value rendered as a bare UUID for as long as the choices took to
+  arrive. It now reads as a skeleton instead: the placeholder says "Loading…",
+  and while the request is in flight the control pulses with its text
+  transparent, so it is a shape rather than a word one has to read and discard.
+
+  The skeleton is a `<select>` with the control's own classes, so the two cannot
+  differ in height and nothing reflows when the choices land. It is replaced
+  outright rather than filled in, which also means the placeholder is a skeleton
+  from first paint — keyed off a request-in-flight class it would have shown
+  plain text until htmx started, which is exactly the moment it is meant to
+  cover.
+
 ## [0.2.0] - 2026-07-26
 
 ### Changed

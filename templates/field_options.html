@@ -1,9 +1,13 @@
-{#- The choices for one setting, swapped into its <select> by htmx.
-
-     Shaping lives here rather than in the browser: which entries are offered,
-     which is the account's own default, and which is currently stored are all
-     decisions, and this is where they can be read and tested. -#}
-<option value="">{% if let Some(d) = account_default %}Account default ({{ d }}){% else %}Account default{% endif %}</option>
+{#- Replaces the skeleton outright, so it carries the control itself and not
+     just its contents. Which entries are offered, which is the account's own
+     and which is stored are decisions, and they are made here where they can
+     be tested rather than in the browser. -#}
+<select name="value"
+        hx-patch="/dashboard/{{ mcp_id }}/field/{{ field_id }}" hx-trigger="change"
+        hx-target="next [data-status]" hx-swap="outerHTML"
+        class="mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none">
+  <option value="">{% if let Some(d) = account_default %}Account default ({{ d }}){% else %}Account default{% endif %}</option>
 {%- for o in options %}
-<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}{% if o.is_default %} — account default{% endif %}</option>
+  <option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}{% if o.is_default %} — account default{% endif %}</option>
 {%- endfor %}
+</select>

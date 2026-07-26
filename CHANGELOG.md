@@ -20,6 +20,12 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   credential that is making them slow. It waits a little for a nicer page and
   never waits long.
 
+- **One definition of a form control.** The placeholder, the control that
+  replaces it and the credential inputs all carried the same class list written
+  out three times, which is how they came to disagree: a class added to one and
+  not the others changed the box model and the swap moved the page. They share a
+  macro now.
+
 - **"updated 3 hours ago" instead of a timestamp.** The exact time was rendered
   as RFC 3339 and rewritten by script into the reader's locale, which meant an
   ISO string visibly sitting there until that ran. No request header carries a

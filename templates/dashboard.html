@@ -46,7 +46,11 @@
       </div>
 
       {% if m.has_credential %}
+      {% if m.public %}
+      <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">No credentials needed. Add it to Claude:</p>
+      {% else %}
       <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Credentials set · updated <time datetime="{{ m.updated_at }}">{{ m.updated_at }}</time>. Add it to Claude:</p>
+      {% endif %}
 
       <div class="mt-4 space-y-2">
         <details class="rounded-lg ring-1 ring-inset ring-slate-200 dark:ring-slate-700 open:bg-slate-50 dark:open:bg-slate-800/50">

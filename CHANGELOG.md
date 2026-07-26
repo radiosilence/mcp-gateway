@@ -20,7 +20,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   any more, in exchange for the shaping being somewhere it can be read and
   tested.
 
-- **htmx is vendored, not fetched.** Same reasoning as the stylesheet, and a
+- **htmx 2.0.10 is vendored, not fetched.** Same reasoning as the stylesheet, and a
   pinned copy in the tree is the only version anyone can be served. No
   `hx-on:` attributes anywhere: those build functions at runtime, which the
   content-security-policy refuses, and quietly adding `unsafe-eval` to make one

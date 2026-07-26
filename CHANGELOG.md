@@ -3,6 +3,14 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-07-26
+
+### Fixed
+
+- **Only secrets are marked as set.** A visible field shows its own value, so
+  saying it was set stated the same thing twice. A password box looks identical
+  either way, which is the case worth answering.
+
 ## [0.5.0] - 2026-07-26
 
 ### Added

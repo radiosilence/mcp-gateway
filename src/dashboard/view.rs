@@ -62,9 +62,9 @@ pub(super) struct FieldView {
     /// `password` or `text` — secrets are never rendered back into the page.
     pub(super) input_type: String,
     pub(super) secret: bool,
-    /// Whether something is stored for this field. A secret is never rendered
-    /// back, so without saying so there is no telling a set password from an
-    /// empty one.
+    /// Whether something is stored for this field. Only shown for secrets: a
+    /// visible field displays its own value, but a password box looks the same
+    /// whether one is held or not.
     pub(super) is_set: bool,
     pub(super) placeholder: String,
     /// Prefilled with the stored value when the field is not a secret (so a

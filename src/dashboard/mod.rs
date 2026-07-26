@@ -372,6 +372,19 @@ pub async fn delete_credential(
 
 #[cfg(test)]
 mod tests {
+
+    /// Connecting an MCP whose fields are all optional stores no values, and
+    /// must still count as connected — TfL works anonymously, and a key there
+    /// only raises a rate limit. The empty set is the record that you asked
+    /// for it.
+    #[test]
+    fn an_mcp_can_be_connected_while_holding_nothing() {
+        let optional = field("app_key", true, false);
+        assert!(matches!(resolve_field(&optional, Some(""), None), Ok(None)));
+
+        let values = CredentialSet::new();
+        assert!(values.is_empty(), "nothing to store, and that is the point");
+    }
     use super::*;
 
     fn field(id: &str, secret: bool, required: bool) -> crate::config::CredentialField {

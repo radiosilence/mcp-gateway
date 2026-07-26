@@ -47,11 +47,15 @@ pub(super) async fn verify(state: &AppState, sub: &str, mcp: &crate::config::Mcp
     else {
         return Verified::Unknown;
     };
-    let Ok(data) = crate::backend::graphql(state, mcp, &credentials, &check.query, None).await
-    else {
-        // Could be a revoked credential, could be the server. Saying which
-        // without being told is how a user ends up rotating a working password.
-        return Verified::Unknown;
+    let data = match crate::backend::graphql(state, mcp, &credentials, &check.query, None).await {
+        Ok(data) => data,
+        Err(e) => {
+            // Could be a revoked credential, could be the server. Saying which
+            // without being told is how someone ends up rotating a working
+            // password — so it is logged rather than guessed at.
+            tracing::info!(error = %e, mcp = %mcp.id, "credential check could not be completed");
+            return Verified::Unknown;
+        }
     };
 
     read_verdict(check, &data)
@@ -317,6 +321,20 @@ mod tests {
         );
         assert!(read_verdict(&c, &json!({})) == Verified::Unknown);
         assert!(read_verdict(&c, &json!({"viewer": {}})) == Verified::Unknown);
+    }
+
+    /// An MCP that declares no check is not the same as one whose check did not
+    /// finish: the first is taken at its word, the second is only unknown. The
+    /// badge depends on telling those apart.
+    #[test]
+    fn declaring_no_check_is_not_a_failed_check() {
+        // `verify()` returns Unknown for both, so the distinction lives in the
+        // view: `m.verify.is_none()` is what separates them.
+        let none: Option<crate::config::Verify> = None;
+        assert!(none.is_none(), "no check declared");
+
+        let declared = check(Some("viewer.status"), Some("CONNECTED"), None);
+        assert!(read_verdict(&declared, &json!({})) == Verified::Unknown);
     }
 
     /// Nothing is ever called rejected unless the registry named the value that

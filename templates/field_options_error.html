@@ -1,6 +1,5 @@
-{% import "controls.html" as ui %}
-{#- Also replaces the skeleton, so it keeps the shape of a control rather than
-     leaving a gap where a setting used to be. -#}
-<select disabled class="{% call ui::field_control() %}">
-  <option>Could not load choices: {{ error }}</option>
-</select>
+{#- A message, not a disabled dropdown. A <select> cannot wrap, so a sentence
+     put in one is clipped mid-word, and offering a control to pick from when
+     there is nothing to pick is its own kind of lie. The badge already carries
+     the verdict; this says what the backend actually replied. -#}
+<p class="mt-1 text-xs text-amber-600 dark:text-amber-400">{{ error }}</p>

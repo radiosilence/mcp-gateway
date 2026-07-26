@@ -3,6 +3,22 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-07-26
+
+### Fixed
+
+- **A settings dropdown flashed a raw identifier before it resolved.** Calendars
+  are keyed by id rather than name, deliberately — names are not unique — so the
+  stored value rendered as a bare UUID for as long as the choices took to
+  arrive. It now reads as a skeleton instead: the placeholder says "Loading…",
+  and while the request is in flight the control pulses with its text
+  transparent, so it is a shape rather than a word one has to read and discard.
+
+  Done with CSS keyed off the `htmx-request` class, which htmx adds to the
+  requesting element and removes once the swap lands. That leaves nothing to
+  undo afterwards — necessary here, because the content-security-policy rules
+  out the `hx-on:` handler that would otherwise do it.
+
 ## [0.2.0] - 2026-07-26
 
 ### Changed

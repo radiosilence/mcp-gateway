@@ -17,7 +17,7 @@ to the deployment that instantiates it.
 | `gateway` | built from `Dockerfile` | the gateway (lean Rust); :8080; registry via `MCP_REGISTRY` |
 | `fastmail-mcp` | `ghcr.io/radiosilence/fastmail-cli` | backend MCP (`mcp --http`); internal :8080 |
 | `caldav-mcp` | `ghcr.io/radiosilence/caldav-cli` | backend MCP (`mcp --http --graphql`); internal :8080 |
-| `folk-mcp` | `ghcr.io/radiosilence/mainlynorfolk-cli` | backend MCP, credential-less; internal :8080 |
+| `folk-mcp` | `ghcr.io/radiosilence/mainlynorfolk-mcp` | backend MCP, credential-less; internal :8080 |
 | `tfl-mcp` | `ghcr.io/radiosilence/tfl-cli` | backend MCP; internal :8080 |
 
 Backend images come from the CLI repos, which publish multi-arch builds on

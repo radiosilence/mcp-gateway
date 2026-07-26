@@ -80,10 +80,17 @@
       {% if m.has_settings %}
       <div class="mt-4 space-y-3">
         {% for f in m.fields %}{% if !f.options_url.is_empty() %}
-        <label class="block">
+        {#- The label loads the choices once the page is up, so a slow or
+            unreachable backend costs a dropdown and not the dashboard. The
+            select saves on pick — there is no form around it and nothing to
+            lose by navigating away. Two elements because one element gets one
+            request: the outer fills the select, the select sends the change. -#}
+        <label class="block"
+               hx-get="{{ f.options_url }}" hx-trigger="load" hx-target="find select" hx-swap="innerHTML">
           <span class="text-xs text-slate-500 dark:text-slate-400">{{ f.label }}</span>
-          <select data-options="{{ f.options_url }}" data-save="/dashboard/{{ m.id }}/field/{{ f.id }}"
-                  data-current="{{ f.value }}"
+          <select name="value"
+                  hx-patch="/dashboard/{{ m.id }}/field/{{ f.id }}" hx-trigger="change"
+                  hx-target="next [data-status]" hx-swap="outerHTML"
                   class="mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none">
             <option value="{{ f.value }}">{% if f.value.is_empty() %}Loading…{% else %}{{ f.value }}{% endif %}</option>
           </select>

@@ -1,0 +1,5 @@
+{#- Replaces the line under a setting after it saves, so it carries the same
+     classes as the one the page rendered — including `data-status`, which is
+     what the next save targets. Its own template so the stylesheet build sees
+     these classes; it scans markup, not Rust. -#}
+<span class="mt-1 block text-xs {% if bad %}text-amber-600 dark:text-amber-400{% else %}text-slate-400 dark:text-slate-500{% endif %}" data-status>{{ message }}</span>

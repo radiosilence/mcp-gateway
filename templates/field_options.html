@@ -1,0 +1,9 @@
+{#- The choices for one setting, swapped into its <select> by htmx.
+
+     Shaping lives here rather than in the browser: which entries are offered,
+     which is the account's own default, and which is currently stored are all
+     decisions, and this is where they can be read and tested. -#}
+<option value="">{% if let Some(d) = account_default %}Account default ({{ d }}){% else %}Account default{% endif %}</option>
+{%- for o in options %}
+<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}{% if o.is_default %} — account default{% endif %}</option>
+{%- endfor %}

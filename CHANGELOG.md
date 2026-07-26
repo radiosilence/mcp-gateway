@@ -7,19 +7,18 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **A settings dropdown flashed a raw identifier before it resolved.** Calendars
-  are keyed by id rather than name, deliberately — names are not unique — so the
-  stored value rendered as a bare UUID for as long as the choices took to
-  arrive. It now reads as a skeleton instead: the placeholder says "Loading…",
-  and while the request is in flight the control pulses with its text
-  transparent, so it is a shape rather than a word one has to read and discard.
+- **A settings dropdown flashed a raw identifier before it resolved.** An
+  option is keyed by its id rather than its label, because labels are not
+  guaranteed unique, so a stored value showed as a bare identifier for as long
+  as the choices took to arrive.
 
-  The skeleton is a `<select>` with the control's own classes, so the two cannot
-  differ in height and nothing reflows when the choices land. It is replaced
-  outright rather than filled in, which also means the placeholder is a skeleton
-  from first paint — keyed off a request-in-flight class it would have shown
-  plain text until htmx started, which is exactly the moment it is meant to
-  cover.
+  It is a skeleton now: a `<select>` carrying the control's own classes, pulsing
+  with no text and no arrow, replaced outright once the choices land. The same
+  element and the same classes as the thing that replaces it, so the two cannot
+  differ in height and nothing reflows. Rendering it as the initial state rather
+  than styling a request-in-flight class also means it is a skeleton from first
+  paint rather than from whenever the request starts, which is the gap it exists
+  to cover.
 
 ## [0.2.0] - 2026-07-26
 

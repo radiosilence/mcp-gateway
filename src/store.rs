@@ -54,6 +54,28 @@ impl TokenMeta {
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_else(|_| self.updated_at.to_string())
     }
+
+    /// How long ago, in words. Rendered by the server because the alternative
+    /// needs the viewer's timezone, which the server does not have — and an
+    /// exact time formatted in the wrong zone, or an ISO string sitting there
+    /// until scripting rewrites it, are both worse than "3 hours ago". This
+    /// says the thing the dashboard is actually asked: is it recent.
+    pub fn updated_ago(&self) -> String {
+        let seconds = (OffsetDateTime::now_utc() - self.updated_at).whole_seconds();
+        // A clock skewed the other way should not read "in -3 minutes".
+        let seconds = seconds.max(0);
+        let (n, unit) = match seconds {
+            0..60 => return "just now".into(),
+            60..3_600 => (seconds / 60, "minute"),
+            3_600..86_400 => (seconds / 3_600, "hour"),
+            86_400..2_592_000 => (seconds / 86_400, "day"),
+            _ => (seconds / 2_592_000, "month"),
+        };
+        match n {
+            1 => format!("1 {unit} ago"),
+            n => format!("{n} {unit}s ago"),
+        }
+    }
 }
 
 /// A user's values for one MCP, keyed by [`crate::config::CredentialField::id`].
@@ -239,6 +261,23 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn elapsed_time_reads_as_words() {
+        let ago = |secs: i64| {
+            TokenMeta {
+                updated_at: OffsetDateTime::now_utc() - time::Duration::seconds(secs),
+            }
+            .updated_ago()
+        };
+
+        assert_eq!(ago(5), "just now");
+        assert_eq!(ago(60), "1 minute ago");
+        assert_eq!(ago(3 * 3_600), "3 hours ago");
+        assert_eq!(ago(2 * 86_400), "2 days ago");
+        // A clock that disagrees the other way must not read "in -3 minutes".
+        assert_eq!(ago(-200), "just now");
+    }
 
     #[test]
     fn credential_sets_round_trip() {

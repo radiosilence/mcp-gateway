@@ -1,0 +1,4 @@
+{#- Shared so the placeholder and the control that replaces it cannot drift.
+     They already did once: a class on one and not the other changed the box
+     model, and the swap visibly moved the page. -#}
+{% macro field_control() %}mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none{% endmacro %}

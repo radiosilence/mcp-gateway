@@ -71,6 +71,9 @@ struct FieldView {
     from_backend: bool,
     /// Endpoint serving those choices. Empty until credentials exist.
     options_url: String,
+    /// The rendered control, when its choices arrived in time to put them in
+    /// the page. Empty means the page ships a placeholder and htmx fills it.
+    options_html: String,
 }
 
 struct McpView {
@@ -84,6 +87,11 @@ struct McpView {
     /// the credential form, since that is not what it is.
     has_settings: bool,
     updated_at: String,
+    /// Said in words, because the server has no idea what timezone the reader
+    /// is in — no request header carries one — and an exact time in the wrong
+    /// zone is worse than none. The precise value stays in the element for
+    /// anyone who wants it.
+    updated_ago: String,
     connector_url: String,
     claude_code_cmd: String,
     key_help_url: String,
@@ -127,6 +135,57 @@ pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Respons
     }
 }
 
+/// How long the page will wait for every connected setting's choices before
+/// giving up on the stragglers.
+///
+/// They come from the backends, not from us, so this is a network call to
+/// somebody else's calendar server on the way to rendering. Worth doing —
+/// arriving complete beats a control that fills in afterwards — but not worth
+/// the page for. Whatever misses the budget falls back to loading over htmx,
+/// which is also what happens when a backend is refusing outright, so the slow
+/// path is the same path and gets exercised.
+const OPTIONS_BUDGET: std::time::Duration = std::time::Duration::from_millis(600);
+
+/// Every connected setting's choices, fetched concurrently, keyed by MCP and
+/// field. Missing simply means it did not arrive in time.
+async fn prefetch_options(
+    state: &AppState,
+    sub: &str,
+) -> HashMap<(String, String), (Value, String)> {
+    let mut tasks = tokio::task::JoinSet::new();
+    for m in &state.config.mcps {
+        for f in &m.fields {
+            let Some(query) = f.options_query.clone() else {
+                continue;
+            };
+            let (state, sub) = (state.clone(), sub.to_string());
+            let (mcp_id, field_id) = (m.id.clone(), f.id.clone());
+            tasks.spawn(async move {
+                let mcp = state.config.mcp(&mcp_id)?;
+                let credentials = state
+                    .store
+                    .get_credentials(&sub, &mcp_id, mcp.primary_field())
+                    .await
+                    .ok()??;
+                let data = crate::backend::graphql(&state, mcp, &credentials, &query, None)
+                    .await
+                    .ok()?;
+                let current = credentials.get(&field_id).cloned().unwrap_or_default();
+                Some(((mcp_id, field_id), (options_of(&data), current)))
+            });
+        }
+    }
+
+    let deadline = tokio::time::Instant::now() + OPTIONS_BUDGET;
+    let mut out = HashMap::new();
+    while let Ok(Some(finished)) = tokio::time::timeout_at(deadline, tasks.join_next()).await {
+        if let Ok(Some((key, value))) = finished {
+            out.insert(key, value);
+        }
+    }
+    out
+}
+
 pub async fn dashboard(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -136,6 +195,7 @@ pub async fn dashboard(
         return Ok(Redirect::to("/login").into_response());
     };
     let base = state.config.public_url.trim_end_matches('/');
+    let prefetched = prefetch_options(&state, &session.sub).await;
 
     let mut mcps = Vec::new();
     for m in &state.config.mcps {
@@ -146,10 +206,10 @@ pub async fn dashboard(
             .map_err(AppError::Internal)?;
         // A public MCP is connected the moment the user has logged in — there
         // is nothing to store, so nothing to wait for.
-        let (has_credential, updated_at) = match (m.is_public(), meta) {
-            (true, _) => (true, String::new()),
-            (false, Some(meta)) => (true, meta.updated_at_rfc3339()),
-            (false, None) => (false, String::new()),
+        let (has_credential, updated_at, updated_ago) = match (m.is_public(), meta) {
+            (true, _) => (true, String::new(), String::new()),
+            (false, Some(meta)) => (true, meta.updated_at_rfc3339(), meta.updated_ago()),
+            (false, None) => (false, String::new(), String::new()),
         };
 
         // Non-secret values are read back so they can be edited in place;
@@ -168,6 +228,12 @@ pub async fn dashboard(
             .fields
             .iter()
             .map(|f| FieldView {
+                options_html: prefetched
+                    .get(&(m.id.clone(), f.id.clone()))
+                    .map(|(options, current)| {
+                        render_to_string(options_template(options, current, &m.id, &f.id))
+                    })
+                    .unwrap_or_default(),
                 value: match f.secret {
                     true => String::new(),
                     false => stored
@@ -208,6 +274,7 @@ pub async fn dashboard(
             has_credential,
             public: m.is_public(),
             updated_at,
+            updated_ago,
             connector_url,
             key_help_url: m.key_help_url.clone().unwrap_or_default(),
             fields,
@@ -554,6 +621,15 @@ fn status_fragment(message: String, bad: bool) -> Response {
 
 /// A rendering failure here is a bug in a template, not something the user can
 /// act on, so it surfaces as text rather than taking the whole page down.
+/// Empty on failure: a fragment that will not render is a template bug, and the
+/// page is more use with a placeholder in that slot than not at all.
+fn render_to_string<T: Template>(template: T) -> String {
+    template.render().unwrap_or_else(|e| {
+        tracing::error!(error = %e, "fragment render failed");
+        String::new()
+    })
+}
+
 fn render<T: Template>(template: T) -> Response {
     match template.render() {
         Ok(html) => Html(html).into_response(),

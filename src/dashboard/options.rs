@@ -22,6 +22,72 @@ const OPTIONS_BUDGET: std::time::Duration = std::time::Duration::from_millis(600
 use crate::dashboard::{FieldOptionsTemplate, OptionView, render};
 use crate::state::AppState;
 
+/// What the gateway can honestly say about a backend's credentials.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum Verified {
+    /// The backend confirmed them.
+    Yes,
+    /// The backend said they are wrong. Only ever from an explicit match, never
+    /// inferred from an error — a server having a bad day is not a bad password.
+    Rejected,
+    /// No check declared, or one that could not be completed. The gateway makes
+    /// no claim rather than a flattering guess.
+    Unknown,
+}
+
+/// Ask a backend whether it accepts what we hold.
+pub(super) async fn verify(state: &AppState, sub: &str, mcp: &crate::config::Mcp) -> Verified {
+    let Some(check) = &mcp.verify else {
+        return Verified::Unknown;
+    };
+    let Ok(Some(credentials)) = state
+        .store
+        .get_credentials(sub, &mcp.id, mcp.primary_field())
+        .await
+    else {
+        return Verified::Unknown;
+    };
+    let Ok(data) = crate::backend::graphql(state, mcp, &credentials, &check.query, None).await
+    else {
+        // Could be a revoked credential, could be the server. Saying which
+        // without being told is how a user ends up rotating a working password.
+        return Verified::Unknown;
+    };
+
+    read_verdict(check, &data)
+}
+
+/// Read the answer out of the response. Separated from asking so the part that
+/// decides what a backend said can be tested without one.
+fn read_verdict(check: &crate::config::Verify, data: &Value) -> Verified {
+    let Some(path) = &check.path else {
+        // Nothing named to read: the backend raises on bad auth, so having got
+        // an answer at all is the answer.
+        return Verified::Yes;
+    };
+    let Some(value) = path.split('.').try_fold(data, |v, key| v.get(key)) else {
+        return Verified::Unknown;
+    };
+    let text = value.as_str();
+
+    // Only an explicit match calls a credential wrong. Everything unrecognised
+    // is unknown, because "not the value meaning success" covers a server that
+    // is merely unwell.
+    if check.rejected.is_some() && text == check.rejected.as_deref() {
+        return Verified::Rejected;
+    }
+    let ok = match &check.ok {
+        Some(expected) => text == Some(expected.as_str()),
+        None => value
+            .as_bool()
+            .unwrap_or(!text.unwrap_or_default().is_empty()),
+    };
+    match ok {
+        true => Verified::Yes,
+        false => Verified::Unknown,
+    }
+}
+
 /// One setting's choices, and which of them is stored.
 pub(super) struct Choices {
     pub(super) options: Value,
@@ -191,6 +257,78 @@ mod tests {
     use askama::Template;
 
     use super::*;
+
+    fn check(
+        path: Option<&str>,
+        ok: Option<&str>,
+        rejected: Option<&str>,
+    ) -> crate::config::Verify {
+        crate::config::Verify {
+            query: "{ viewer { status } }".into(),
+            path: path.map(str::to_string),
+            ok: ok.map(str::to_string),
+            rejected: rejected.map(str::to_string),
+        }
+    }
+
+    /// caldav-cli's shape: a status enum that never raises, where one value
+    /// means working, one means the credential is wrong, and the rest mean the
+    /// server could not say.
+    #[test]
+    fn a_status_field_gives_all_three_answers() {
+        let c = check(
+            Some("viewer.status"),
+            Some("CONNECTED"),
+            Some("INVALID_CREDENTIALS"),
+        );
+        let at = |s: &str| read_verdict(&c, &json!({"viewer": {"status": s}}));
+
+        assert!(at("CONNECTED") == Verified::Yes);
+        assert!(at("INVALID_CREDENTIALS") == Verified::Rejected);
+        // Not a verdict on the credential: the server is unwell, and saying
+        // "rejected" here sends someone off to rotate a working password.
+        assert!(at("UNREACHABLE") == Verified::Unknown);
+        assert!(at("SOMETHING_NEW") == Verified::Unknown);
+    }
+
+    /// fastmail-cli's shape: bad auth raises, so reaching a response at all is
+    /// the whole answer and there is nothing to read.
+    #[test]
+    fn no_path_means_answering_at_all_is_the_answer() {
+        let verdict = read_verdict(&check(None, None, None), &json!({"session": {}}));
+        assert!(verdict == Verified::Yes);
+    }
+
+    #[test]
+    fn a_truthy_value_passes_when_no_expected_value_is_named() {
+        let c = check(Some("session.username"), None, None);
+        assert!(read_verdict(&c, &json!({"session": {"username": "jc"}})) == Verified::Yes);
+        assert!(read_verdict(&c, &json!({"session": {"username": ""}})) == Verified::Unknown);
+        assert!(read_verdict(&c, &json!({"session": {"ok": true}})) == Verified::Unknown);
+    }
+
+    /// A backend that changed shape must not read as a rejection.
+    #[test]
+    fn a_missing_path_is_unknown_not_rejected() {
+        let c = check(
+            Some("viewer.status"),
+            Some("CONNECTED"),
+            Some("INVALID_CREDENTIALS"),
+        );
+        assert!(read_verdict(&c, &json!({})) == Verified::Unknown);
+        assert!(read_verdict(&c, &json!({"viewer": {}})) == Verified::Unknown);
+    }
+
+    /// Nothing is ever called rejected unless the registry named the value that
+    /// means it.
+    #[test]
+    fn without_a_rejected_value_nothing_is_rejected() {
+        let c = check(Some("viewer.status"), Some("CONNECTED"), None);
+        assert!(
+            read_verdict(&c, &json!({"viewer": {"status": "INVALID_CREDENTIALS"}}))
+                == Verified::Unknown
+        );
+    }
 
     /// The shaping that used to live in the browser: which entries are offered
     /// at all, which is marked as the account's own, and which is preselected.

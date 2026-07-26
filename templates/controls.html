@@ -6,3 +6,9 @@
 {#- The line under a setting. One definition: the page renders it empty and a
      save replaces it, and those drifting apart is how the last one broke. -#}
 {% macro field_status(text, bad) %}<span class="mt-1 block text-xs {% if bad %}text-amber-600 dark:text-amber-400{% else %}text-slate-400 dark:text-slate-500{% endif %}" data-status>{{ text }}</span>{% endmacro %}
+
+{#- The badge. Colours arrive as whole class names rather than being built from
+     a tone, because Tailwind scans for literals — `bg-{tone}-50` generates
+     nothing and the badge renders unstyled. Structure is shared; the palette
+     stays visible at the call site. -#}
+{% macro badge(colours, dot, label) %}<span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 {{ colours }}"><span class="h-1.5 w-1.5 rounded-full {{ dot }}"></span> {{ label }}</span>{% endmacro %}

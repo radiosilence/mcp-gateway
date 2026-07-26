@@ -103,6 +103,14 @@ services:
           backend: http://caldav-mcp:8080/mcp
           graphql: http://caldav-mcp:8080/graphql
           key_help_url: https://appleid.apple.com
+          # Answers calmly rather than raising, so the three cases are told
+          # apart: working, refused, and the server being unwell — which must
+          # not read as a wrong password.
+          verify:
+            query: "{ viewer { status } }"
+            path: viewer.status
+            ok: CONNECTED
+            rejected: INVALID_CREDENTIALS
           fields:
             - id: username
               label: Apple ID / username

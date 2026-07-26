@@ -102,6 +102,37 @@ pub struct Mcp {
     /// Optional hint text, used as the placeholder in the single-secret form.
     #[serde(default)]
     pub key_hint: Option<String>,
+    /// How to ask this backend whether the stored credentials are any good.
+    /// Absent means the gateway makes no claim either way, which is the honest
+    /// answer for a backend that authenticates nothing.
+    #[serde(default)]
+    pub verify: Option<Verify>,
+}
+
+/// A query proving the stored credentials are accepted, and how to read it.
+///
+/// Backends disagree about how to report bad auth — some raise, some answer
+/// calmly with a status — so this describes both shapes rather than forcing one.
+/// What it will not do is guess: an error is never taken as proof a credential
+/// is wrong, only an explicit [`Verify::rejected`] match is. A backend that is
+/// merely unreachable must not have its user told to go and change a password.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Verify {
+    /// Run with the user's own credentials, like any other backend call.
+    pub query: String,
+    /// Dotted path to the value that answers the question. Absent means the
+    /// query completing without error is itself the answer, which is all a
+    /// backend that raises on bad auth can tell us.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// The value at `path` meaning the credentials work. Absent means any
+    /// truthy value does.
+    #[serde(default)]
+    pub ok: Option<String>,
+    /// The value at `path` meaning the backend actively rejected them. Absent
+    /// means nothing is ever reported as rejected — only verified or unknown.
+    #[serde(default)]
+    pub rejected: Option<String>,
 }
 
 impl Mcp {
@@ -521,6 +552,41 @@ mod tests {
             query.contains("value:") && query.contains("label:"),
             "got {query}"
         );
+    }
+
+    #[test]
+    fn a_verify_block_loads_with_only_a_query() {
+        // All a backend that raises on bad auth can support.
+        let mcps = parse(
+            r#"[{"id":"x","name":"X","backend":"http://x/mcp","credential_header":"X-T",
+                 "verify":{"query":"{ session { username } }"}}]"#,
+        )
+        .unwrap();
+        let v = mcps[0].verify.as_ref().unwrap();
+        assert_eq!(v.query, "{ session { username } }");
+        assert!(v.path.is_none() && v.ok.is_none() && v.rejected.is_none());
+    }
+
+    #[test]
+    fn a_verify_block_carries_the_values_it_was_given() {
+        let mcps = parse(
+            r#"[{"id":"x","name":"X","backend":"http://x/mcp","credential_header":"X-T",
+                 "verify":{"query":"{ viewer { status } }","path":"viewer.status",
+                           "ok":"CONNECTED","rejected":"INVALID_CREDENTIALS"}}]"#,
+        )
+        .unwrap();
+        let v = mcps[0].verify.as_ref().unwrap();
+        assert_eq!(v.path.as_deref(), Some("viewer.status"));
+        assert_eq!(v.ok.as_deref(), Some("CONNECTED"));
+        assert_eq!(v.rejected.as_deref(), Some("INVALID_CREDENTIALS"));
+    }
+
+    #[test]
+    fn an_mcp_without_a_verify_block_claims_nothing() {
+        let mcps =
+            parse(r#"[{"id":"x","name":"X","backend":"http://x/mcp","credential_header":"X-T"}]"#)
+                .unwrap();
+        assert!(mcps[0].verify.is_none());
     }
 
     #[test]

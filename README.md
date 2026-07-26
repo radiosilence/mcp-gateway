@@ -1,4 +1,4 @@
-# jaritanet-mcp-gateway
+# mcp-gateway
 
 An OAuth-fronted gateway for self-hosted MCP servers. Add any of your MCPs to
 Claude (Desktop / mobile / web) as custom connectors without each one needing
@@ -67,8 +67,8 @@ flowchart LR
   reaches a client), looks up the caller's per-MCP key, and reverse-proxies
   `/{id}` to that MCP's backend pod, injecting the key as the MCP's own header.
 - **Backends stay dumb**: key in → work out. They link no gateway code and hold
-  no auth of their own. Adding an MCP is one entry in [`mcps.json`](mcps.json),
-  not code (Model B).
+  no auth of their own. Adding an MCP is one entry in the registry, not code
+  (Model B).
 - **State is disposable**: lose Postgres and users just re-paste their keys
   (encrypted at rest with XChaCha20-Poly1305). Hydra + Postgres are separate
   deployments.
@@ -121,24 +121,31 @@ All via env (see `.env.example`). Notable:
 | `TOKEN_ENC_KEY` | 32-byte base64 key; the only thing protecting stored credentials |
 | `HYDRA_ISSUER` | browser/Claude-facing Hydra URL; advertised in protected-resource metadata |
 | `HYDRA_ADMIN_URL` | Hydra admin API (introspection, login/consent, DCR client-create) — cluster-internal only |
-| `MCP_REGISTRY` | path to the MCP registry JSON (default `mcps.json`) |
+| `MCP_REGISTRY` | the MCP registry document itself (YAML or JSON) — required |
 
-### MCP registry (`mcps.json`)
+### MCP registry (`MCP_REGISTRY`)
 
 Each backend MCP is one entry — adding an MCP is config, not code:
 
-```json
-[
-  {
-    "id": "fastmail",
-    "name": "Fastmail",
-    "backend": "http://fastmail-mcp:8080/mcp",
-    "credential_header": "X-Fastmail-Token",
-    "key_help_url": "https://app.fastmail.com/settings/security/tokens",
-    "key_hint": "fmu1-…"
-  }
-]
+```yaml
+- id: fastmail
+  name: Fastmail
+  backend: http://fastmail-mcp:8080/mcp
+  credential_header: X-Fastmail-Token
+  key_help_url: https://app.fastmail.com/settings/security/tokens
+  key_hint: fmu1-…
 ```
+
+The gateway ships no registry of its own. It arrives whole in the environment
+rather than as a path to a file, because the registry describes a *deployment* —
+which MCPs it fronts and where they live — and whoever deploys the gateway
+already holds that as config. A file would be a second copy to keep in sync, and
+a mounted ConfigMap edited under a running pod is invisible to it; env is part
+of the pod spec, so changing the registry rolls the deployment.
+
+JSON is accepted too, since every JSON document is valid YAML.
+`docker-compose.yml` is the worked example: the registry sits in the `gateway`
+service's environment, beside the backend services it names.
 
 `/fastmail` proxies to `backend`, injecting the user's stored key as
 `credential_header`. (Ids that would shadow a gateway route — `register`,
@@ -153,26 +160,35 @@ authenticates with a username *and* an app password, against a server URL that
 differs per provider. Such an MCP declares `fields` instead, and each field is
 injected into its own header:
 
-```json
-{
-  "id": "caldav",
-  "name": "Calendar (CalDAV)",
-  "backend": "http://caldav-mcp:8080/mcp",
-  "key_help_url": "https://appleid.apple.com",
-  "fields": [
-    { "id": "username", "label": "Apple ID / username", "header": "X-CalDAV-Username",
-      "secret": false, "hint": "you@icloud.com" },
-    { "id": "password", "label": "App-specific password", "header": "X-CalDAV-Password",
-      "secret": true, "hint": "abcd-efgh-ijkl-mnop" },
-    { "id": "url", "label": "CalDAV server", "header": "X-CalDAV-Url",
-      "secret": false, "default": "https://caldav.icloud.com", "required": false },
-    { "id": "calendar", "label": "Default calendar for new events",
-      "header": "X-CalDAV-Calendar", "secret": false, "required": false,
-      "options_query": "{ options: calendars(first: 100) { nodes { value: name label: name disabled: readOnly isDefault } } }",
-      "sync_mutation": "mutation($value: String!) { setDefaultCalendar(id: $value) { success error } }" }
-  ],
-  "graphql": "http://caldav-mcp:8080/graphql"
-}
+```yaml
+- id: caldav
+  name: Calendar (CalDAV)
+  backend: http://caldav-mcp:8080/mcp
+  graphql: http://caldav-mcp:8080/graphql
+  key_help_url: https://appleid.apple.com
+  fields:
+    - id: username
+      label: Apple ID / username
+      header: X-CalDAV-Username
+      secret: false
+      hint: you@icloud.com
+    - id: password
+      label: App-specific password
+      header: X-CalDAV-Password
+      hint: abcd-efgh-ijkl-mnop
+    - id: url
+      label: CalDAV server
+      header: X-CalDAV-Url
+      secret: false
+      default: https://caldav.icloud.com
+      required: false
+    - id: calendar
+      label: Default calendar for new events
+      header: X-CalDAV-Calendar
+      secret: false
+      required: false
+      options_query: "{ options: calendars(first: 100) { nodes { value: id label: name disabled: readOnly isDefault } } }"
+      sync_mutation: "mutation($value: String!) { setDefaultCalendar(id: $value) { success error } }"
 ```
 
 | key | meaning |
@@ -242,7 +258,7 @@ keep working with no migration**.
 ## Deploy
 
 `docker-compose.yml` is the **source of truth for the topology**; production is
-that same shape translated to jaritanet's Pulumi. This repo holds no cluster
+that same shape translated to whatever runs it. This repo holds no cluster
 manifests by design. See [`DEPLOY.md`](DEPLOY.md) for the prod deltas (domains,
 TLS, admin-not-exposed, secrets from the backend, opaque tokens).
 

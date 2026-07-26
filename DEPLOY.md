@@ -2,26 +2,31 @@
 
 **`docker-compose.yml` is the source of truth for the topology.** It describes
 every component, their images, env, ports, and dependencies. Production is that
-same topology translated to jaritanet's Pulumi — this repo intentionally holds
-*no* cluster manifests (no k8s YAML, no Terraform). Keep deployment specifics in
-jaritanet; keep the shape here.
+same topology translated to whatever runs it — this repo intentionally holds
+*no* cluster manifests (no k8s YAML, no Terraform) and no registry of its own.
+This is the implementation; hostnames, credentials and the list of MCPs belong
+to the deployment that instantiates it.
 
 ## Components (from `docker-compose.yml`)
 
 | Component | Image | Notes |
 |---|---|---|
-| `postgres` | `postgres:16` | one instance, two DBs: `fastmail_mcp` (gateway) + `hydra` |
+| `postgres` | `postgres:16` | one instance, two DBs: `mcp_gateway` (gateway) + `hydra` |
 | `hydra-migrate` | `oryd/hydra:v2.2.0` | one-shot `migrate sql` before Hydra serves |
 | `hydra` | `oryd/hydra:v2.2.0` | the OAuth AS; public :4444, admin :4445 |
-| `gateway` | built from `Dockerfile` | the gateway (lean Rust); :8080; mounts `mcps.json` |
+| `gateway` | built from `Dockerfile` | the gateway (lean Rust); :8080; registry via `MCP_REGISTRY` |
 | `fastmail-mcp` | `ghcr.io/radiosilence/fastmail-cli` | backend MCP (`mcp --http`); internal :8080 |
 | `caldav-mcp` | `ghcr.io/radiosilence/caldav-cli` | backend MCP (`mcp --http --graphql`); internal :8080 |
+| `folk-mcp` | `ghcr.io/radiosilence/mainlynorfolk-cli` | backend MCP, credential-less; internal :8080 |
+| `tfl-mcp` | `ghcr.io/radiosilence/tfl-cli` | backend MCP; internal :8080 |
 
 Backend images come from the CLI repos, which publish multi-arch builds on
 release — the same images production pulls. This repo builds only the gateway.
 
-Each additional MCP is another backend pod + a `mcps.json` entry. The registry
-(`mcps.json`) is a ConfigMap in prod (`MCP_REGISTRY` points at the mount).
+Each additional MCP is another backend pod plus its registry entry. The registry
+is passed whole in `MCP_REGISTRY`, so the two are declared together wherever the
+deployment lives — and because env is part of the pod spec, editing the registry
+rolls the gateway rather than leaving it on a stale copy.
 
 ## Prod deltas (what Pulumi changes vs compose)
 
@@ -44,7 +49,7 @@ Everything else stays as in compose. The deltas:
 - **Secrets from the secret backend** (SOPS/Vault/sealed-secrets), never inline:
   `POSTGRES_PASSWORD`, `DATABASE_URL`, Hydra `DSN`, `SECRETS_SYSTEM`,
   `TOKEN_ENC_KEY` (32-byte base64), `GH_CLIENT_ID/SECRET`. The
-  `TOKEN_ENC_KEY` is the one that unlocks every stored Fastmail token — tightest
+  `TOKEN_ENC_KEY` is the one that unlocks every stored credential — tightest
   RBAC, never in an image or in git.
 - **Access tokens stay opaque** (Hydra default; we introspect). Do not set
   `STRATEGIES_ACCESS_TOKEN=jwt`.

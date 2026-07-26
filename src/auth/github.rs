@@ -62,7 +62,7 @@ pub async fn exchange_code(
     let user: GithubUser = http
         .get(USER_URL)
         .header("Authorization", format!("Bearer {}", token.access_token))
-        .header("User-Agent", "fastmail-mcp-service")
+        .header("User-Agent", "mcp-gateway")
         .header("Accept", "application/vnd.github+json")
         .send()
         .await

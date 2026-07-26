@@ -9,16 +9,16 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: fastmail
-      POSTGRES_PASSWORD: fastmail
-      POSTGRES_DB: fastmail_mcp
+      POSTGRES_USER: mcpgw
+      POSTGRES_PASSWORD: mcpgw
+      POSTGRES_DB: mcp_gateway
     volumes:
       - ./deploy/local/initdb.sql:/docker-entrypoint-initdb.d/initdb.sql:ro
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fastmail -d fastmail_mcp"]
+      test: ["CMD-SHELL", "pg_isready -U mcpgw -d mcp_gateway"]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -28,7 +28,7 @@ services:
     image: oryd/hydra:v2.2.0
     command: migrate sql -e --yes
     environment:
-      DSN: postgres://fastmail:fastmail@postgres:5432/hydra?sslmode=disable
+      DSN: postgres://mcpgw:mcpgw@postgres:5432/hydra?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
@@ -38,7 +38,7 @@ services:
     image: oryd/hydra:v2.2.0
     command: serve all --dev
     environment:
-      DSN: postgres://fastmail:fastmail@postgres:5432/hydra?sslmode=disable
+      DSN: postgres://mcpgw:mcpgw@postgres:5432/hydra?sslmode=disable
       # Browser/Claude-facing issuer. Defaults to localhost; set HYDRA_ISSUER in
       # .env to a public tunnel hostname to test the Claude connector.
       URLS_SELF_ISSUER: ${HYDRA_ISSUER:-http://localhost:4444}
@@ -78,14 +78,78 @@ services:
       # Public URLs default to localhost; override in .env with tunnel hostnames
       # to test the Claude connector (see "Cloudflare tunnel" in the README).
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
-      DATABASE_URL: postgres://fastmail:fastmail@postgres:5432/fastmail_mcp
+      DATABASE_URL: postgres://mcpgw:mcpgw@postgres:5432/mcp_gateway
       # Issuer is what the browser/Claude use to reach Hydra (advertised in
       # metadata); admin is in-network, used for introspection + login/consent.
       HYDRA_ISSUER: ${HYDRA_ISSUER:-http://localhost:4444}
       HYDRA_ADMIN_URL: http://hydra:4445
-      MCP_REGISTRY: /etc/mcp-gateway/mcps.json
-    volumes:
-      - ./mcps.json:/etc/mcp-gateway/mcps.json:ro
+      # The registry: which MCPs this gateway fronts, what each one is called,
+      # and what it needs from the user. The gateway ships none of its own — it
+      # is the deployment's to define, so it arrives whole in the environment.
+      # Here that deployment is this file, which is why the registry sits
+      # beside the backend services it names.
+      MCP_REGISTRY: |
+        - id: fastmail
+          name: Fastmail
+          backend: http://fastmail-mcp:8080/mcp
+          credential_header: X-Fastmail-Token
+          key_help_url: https://app.fastmail.com/settings/security/tokens
+          key_hint: fmu1-…
+
+        # CalDAV wants a username, a password and a server, not one bearer
+        # token — hence `fields` rather than the `credential_header` shorthand.
+        - id: caldav
+          name: Calendar (CalDAV)
+          backend: http://caldav-mcp:8080/mcp
+          graphql: http://caldav-mcp:8080/graphql
+          key_help_url: https://appleid.apple.com
+          fields:
+            - id: username
+              label: Apple ID / username
+              header: X-CalDAV-Username
+              secret: false
+              hint: you@icloud.com
+            - id: password
+              label: App-specific password
+              header: X-CalDAV-Password
+              hint: abcd-efgh-ijkl-mnop
+            - id: url
+              label: CalDAV server
+              header: X-CalDAV-Url
+              secret: false
+              default: https://caldav.icloud.com
+              required: false
+            # Keyed by calendar id, not name: names are not unique, and this
+            # value rides X-CalDAV-Calendar into every write.
+            - id: calendar
+              label: Default calendar for new events
+              header: X-CalDAV-Calendar
+              secret: false
+              required: false
+              hint: Blank = whichever calendar your calendar app uses
+              options_query: "{ options: calendars(first: 100) { nodes { value: id label: name disabled: readOnly isDefault supportsEvents } } }"
+              sync_mutation: "mutation($$value: String!) { setDefaultCalendar(id: $$value) { success error } }"
+
+        # A public archive: nothing to authenticate to, nothing to store.
+        - id: folk
+          name: Folk (Mainly Norfolk)
+          backend: http://folk-mcp:8080/mcp
+          graphql: http://folk-mcp:8080/graphql
+          public: true
+
+        # TfL works anonymously; a key only raises the rate limit, so the one
+        # field is optional and the MCP is usable the moment you log in.
+        - id: tfl
+          name: TfL (London transport)
+          backend: http://tfl-mcp:8080/mcp
+          graphql: http://tfl-mcp:8080/graphql
+          key_help_url: https://api-portal.tfl.gov.uk/profile
+          fields:
+            - id: app_key
+              label: TfL app key (optional — raises the rate limit)
+              header: X-Tfl-App-Key
+              required: false
+              hint: 32 hex characters
     ports:
       - "8080:8080"
     depends_on:

@@ -10,7 +10,7 @@ jq = "latest"
 # `GATEWAY_HOST=… AUTH_HOST=… mise run tunnel`.
 GATEWAY_HOST = "mcp.radiosilence.dev"
 AUTH_HOST = "auth.radiosilence.dev"
-TUNNEL_NAME = "fastmail-mcp-dev"
+TUNNEL_NAME = "mcp-gateway-dev"
 
 [tasks.up]
 description = "Run the stack locally on http://localhost:8080"

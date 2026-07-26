@@ -59,8 +59,8 @@ fn default_true() -> bool {
     true
 }
 
-/// A backend MCP the gateway fronts. Registry is loaded from a JSON file
-/// (`MCP_REGISTRY`, default `mcps.json`), so adding an MCP is config, not code.
+/// A backend MCP the gateway fronts. The registry comes from the environment
+/// (`MCP_REGISTRY`), so adding an MCP is config, not code.
 #[derive(Clone, Debug, Deserialize)]
 pub struct Mcp {
     /// URL slug + storage key, e.g. "fastmail" → routed at `/mcp/fastmail`.
@@ -179,7 +179,7 @@ impl Config {
                 .map(|s| s.trim().to_lowercase())
                 .filter(|s| !s.is_empty())
                 .collect(),
-            mcps: load_registry(&env_or("MCP_REGISTRY", "mcps.json"))?,
+            mcps: load_registry(&env("MCP_REGISTRY")?)?,
         })
     }
 
@@ -213,11 +213,20 @@ const RESERVED_IDS: &[&str] = &[
     ".well-known",
 ];
 
-fn load_registry(path: &str) -> Result<Vec<Mcp>> {
-    let raw =
-        std::fs::read_to_string(path).with_context(|| format!("reading MCP registry at {path}"))?;
-    let mcps: Vec<Mcp> =
-        serde_json::from_str(&raw).with_context(|| format!("parsing MCP registry at {path}"))?;
+/// Parse the registry document. YAML, and therefore JSON too — every JSON
+/// document is valid YAML, so both forms load through one parser.
+///
+/// It arrives whole in `MCP_REGISTRY` rather than as a path to a file, because
+/// the registry belongs to the deployment and not to this repo: whatever runs
+/// the gateway already holds it as config and can hand it straight over. A file
+/// would be a second copy to keep in sync, and a mounted ConfigMap changing
+/// under a running pod is invisible to it — env is part of the pod spec, so
+/// editing the registry rolls the deployment.
+fn load_registry(raw: &str) -> Result<Vec<Mcp>> {
+    let mcps: Vec<Mcp> = serde_norway::from_str(raw).context(
+        "parsing MCP_REGISTRY, which holds the registry document itself \
+         (YAML or JSON), not a path to one",
+    )?;
     mcps.into_iter().map(normalize).collect()
 }
 
@@ -312,11 +321,8 @@ fn env_or(key: &str, default: &str) -> String {
 mod tests {
     use super::*;
 
-    fn parse(json: &str) -> Result<Vec<Mcp>> {
-        serde_json::from_str::<Vec<Mcp>>(json)?
-            .into_iter()
-            .map(normalize)
-            .collect()
+    fn parse(doc: &str) -> Result<Vec<Mcp>> {
+        load_registry(doc)
     }
 
     #[test]
@@ -433,10 +439,47 @@ mod tests {
         }
     }
 
-    /// Guards the registry that actually ships — a typo here breaks boot.
+    /// The registry is written as YAML by whoever deploys the gateway, so the
+    /// parser has to accept it in that form and not only as JSON.
     #[test]
-    fn the_shipped_registry_loads() {
-        let mcps = load_registry("mcps.json").expect("mcps.json must load");
+    fn a_yaml_registry_loads() {
+        let mcps = parse(
+            r#"
+- id: caldav
+  name: Calendar
+  backend: http://x/mcp
+  fields:
+    - id: username
+      label: Apple ID
+      header: X-CalDAV-Username
+      secret: false
+    - id: password
+      label: App password
+      header: X-CalDAV-Password
+"#,
+        )
+        .unwrap();
+        assert_eq!(mcps[0].id, "caldav");
+        assert_eq!(mcps[0].fields.len(), 2);
+        assert!(!mcps[0].fields[0].secret);
+        assert!(mcps[0].fields[1].secret);
+    }
+
+    /// Guards the dev registry embedded in `docker-compose.yml` — a typo there
+    /// breaks the local stack, and it is the worked example the README points
+    /// at, so it is also the documentation.
+    #[test]
+    fn the_dev_registry_loads() {
+        let compose: serde_norway::Value =
+            serde_norway::from_str(&std::fs::read_to_string("docker-compose.yml").unwrap())
+                .expect("docker-compose.yml must parse");
+        let raw = compose["services"]["gateway"]["environment"]["MCP_REGISTRY"]
+            .as_str()
+            .expect("the gateway service must set MCP_REGISTRY");
+        // Compose escapes a literal `$` as `$$`; undo it so this checks the
+        // document the container is actually handed.
+        let mcps = load_registry(&raw.replace("$$", "$")).expect("the dev registry must load");
+
         let ids: Vec<&str> = mcps.iter().map(|m| m.id.as_str()).collect();
         assert!(ids.contains(&"fastmail"), "got {ids:?}");
         assert!(ids.contains(&"caldav"), "got {ids:?}");

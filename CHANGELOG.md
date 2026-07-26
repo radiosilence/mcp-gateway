@@ -3,6 +3,29 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-07-26
+
+### Changed
+
+- **The settings dropdown is htmx rather than hand-written fetch code.** The
+  server already owned the markup and already parsed the backend's reply, so the
+  script was doing the one part that did not need to be in a browser: deciding
+  which choices to offer, which to mark as the account's own, and which to
+  preselect. That now happens in Rust beside the parsing it depends on, and is
+  tested. `assets/app.js` drops from 73 lines to 29 — what is left is clipboard
+  and locale formatting, which are browser APIs and belong there.
+
+  The two endpoints behind it return HTML fragments instead of JSON, so they are
+  now specific to this page. That is the trade: they were reusable and are not
+  any more, in exchange for the shaping being somewhere it can be read and
+  tested.
+
+- **htmx is vendored, not fetched.** Same reasoning as the stylesheet, and a
+  pinned copy in the tree is the only version anyone can be served. No
+  `hx-on:` attributes anywhere: those build functions at runtime, which the
+  content-security-policy refuses, and quietly adding `unsafe-eval` to make one
+  work would undo most of what the policy is for.
+
 ## [0.1.2] - 2026-07-26
 
 ### Security

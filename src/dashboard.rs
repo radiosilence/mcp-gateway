@@ -6,7 +6,6 @@
 use std::collections::HashMap;
 
 use askama::Template;
-use axum::Json;
 use axum::extract::{Form, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -22,6 +21,36 @@ use crate::store::CredentialSet;
 #[derive(Template)]
 #[template(path = "index.html")]
 struct IndexTemplate;
+
+/// One choice offered for a backend-sourced setting.
+struct OptionView {
+    value: String,
+    label: String,
+    is_default: bool,
+    selected: bool,
+}
+
+#[derive(Template)]
+#[template(path = "field_options.html")]
+struct FieldOptionsTemplate {
+    /// Label of the backend's own default, named in the placeholder so the
+    /// empty choice says what it will actually do.
+    account_default: Option<String>,
+    options: Vec<OptionView>,
+}
+
+#[derive(Template)]
+#[template(path = "field_options_error.html")]
+struct FieldOptionsErrorTemplate {
+    error: String,
+}
+
+#[derive(Template)]
+#[template(path = "field_status.html")]
+struct FieldStatusTemplate {
+    message: String,
+    bad: bool,
+}
 
 /// One input in an MCP's credential form.
 struct FieldView {
@@ -408,8 +437,13 @@ pub async fn set_field(
         .await
         .map_err(AppError::Internal)?;
 
-    let message = sync_upstream(&state, mcp, &values, Some(&stored)).await;
-    Ok(Json(json!({"saved": true, "message": message})).into_response())
+    // A backend that refused the change is worth saying out loud; our stored
+    // value is authoritative either way, so the save still stands.
+    let refused = sync_upstream(&state, mcp, &values, Some(&stored)).await;
+    Ok(status_fragment(
+        refused.clone().unwrap_or_else(|| "Saved".into()),
+        refused.is_some(),
+    ))
 }
 
 /// Suggestions for one field, fetched from the backend with the user's own
@@ -446,13 +480,72 @@ pub async fn field_options(
         return Err(AppError::BadRequest("no credentials stored".into()));
     };
 
+    let current = credentials.get(&field_id).cloned().unwrap_or_default();
+
     match crate::backend::graphql(&state, mcp, &credentials, query, None).await {
-        Ok(data) => Ok(Json(options_of(&data)).into_response()),
+        Ok(data) => Ok(options_fragment(&options_of(&data), &current)),
         Err(e) => {
             // Wrong password, backend down, a calendar server having a bad day:
-            // the user's own error text is more use than a 500.
+            // the user's own error text is more use than a 500. Returning the
+            // status line rather than options leaves the placeholder in place.
             tracing::debug!(error = %e, mcp = %mcp_id, field = %field_id, "options lookup failed");
-            Ok(Json(json!({"error": e.to_string()})).into_response())
+            Ok(render(FieldOptionsErrorTemplate {
+                error: e.to_string(),
+            }))
+        }
+    }
+}
+
+/// The `<option>` list for a setting, with the entries the backend marked
+/// unusable dropped and the stored value preselected.
+fn options_fragment(options: &Value, current: &str) -> Response {
+    render(options_template(options, current))
+}
+
+fn options_template(options: &Value, current: &str) -> FieldOptionsTemplate {
+    let entries = options.as_array().cloned().unwrap_or_default();
+    let account_default = entries
+        .iter()
+        .find(|o| o["isDefault"].as_bool().unwrap_or(false))
+        .and_then(|o| o["label"].as_str())
+        .map(str::to_string);
+
+    let options = entries
+        .iter()
+        .filter(|o| {
+            !o["disabled"].as_bool().unwrap_or(false)
+                && o["supportsEvents"].as_bool().unwrap_or(true)
+        })
+        .map(|o| {
+            let value = o["value"].as_str().unwrap_or_default().to_string();
+            let label = o["label"].as_str().unwrap_or_default().to_string();
+            OptionView {
+                selected: !current.is_empty() && (value == current || label == current),
+                is_default: o["isDefault"].as_bool().unwrap_or(false),
+                value,
+                label,
+            }
+        })
+        .collect();
+
+    FieldOptionsTemplate {
+        account_default,
+        options,
+    }
+}
+
+fn status_fragment(message: String, bad: bool) -> Response {
+    render(FieldStatusTemplate { message, bad })
+}
+
+/// A rendering failure here is a bug in a template, not something the user can
+/// act on, so it surfaces as text rather than taking the whole page down.
+fn render<T: Template>(template: T) -> Response {
+    match template.render() {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "fragment render failed");
+            Html("<span data-status>Could not render</span>").into_response()
         }
     }
 }
@@ -502,6 +595,43 @@ pub async fn delete_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shaping that used to live in the browser: which entries are offered
+    /// at all, which is marked as the account's own, and which is preselected.
+    #[test]
+    fn options_are_filtered_labelled_and_preselected() {
+        let data = json!([
+            {"value": "work", "label": "Work", "isDefault": true},
+            {"value": "ro", "label": "Read only", "disabled": true},
+            {"value": "tasks", "label": "Tasks", "supportsEvents": false},
+            {"value": "home", "label": "Home"},
+        ]);
+        let t = options_template(&data, "home");
+
+        // The placeholder names the backend's own default so the empty choice
+        // says what picking it will actually do.
+        assert_eq!(t.account_default.as_deref(), Some("Work"));
+
+        let offered: Vec<&str> = t.options.iter().map(|o| o.value.as_str()).collect();
+        assert_eq!(offered, ["work", "home"], "read-only and task-only dropped");
+
+        assert!(t.options[0].is_default);
+        assert!(!t.options[0].selected);
+        assert!(t.options[1].selected, "the stored value is preselected");
+
+        let html = t.render().unwrap();
+        assert!(html.contains("— account default"));
+        assert!(html.contains(r#"value="home" selected"#));
+    }
+
+    /// A stored value that no longer exists upstream must not silently select
+    /// something else.
+    #[test]
+    fn nothing_is_preselected_when_the_stored_value_is_gone() {
+        let data = json!([{"value": "home", "label": "Home"}]);
+        let t = options_template(&data, "deleted-calendar");
+        assert!(t.options.iter().all(|o| !o.selected));
+    }
 
     fn field(id: &str, secret: bool, required: bool) -> crate::config::CredentialField {
         serde_json::from_value(json!({

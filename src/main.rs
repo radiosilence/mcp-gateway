@@ -46,6 +46,9 @@ use crate::store::Store;
 /// with no second thing to serve or keep in step.
 const APP_CSS: &str = include_str!("../assets/app.css");
 const APP_JS: &str = include_str!("../assets/app.js");
+/// Vendored rather than fetched: same reasoning as the rest, and a pinned copy
+/// in the tree is also the only version anyone can be served.
+const HTMX_JS: &str = include_str!("../assets/htmx.min.js");
 
 async fn app_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
@@ -95,6 +98,13 @@ async fn security_headers(request: axum::extract::Request, next: middleware::Nex
     // Redundant beside frame-ancestors for anything current, and free.
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     response
+}
+
+async fn htmx_js() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        HTMX_JS,
+    )
 }
 
 #[tokio::main]
@@ -179,6 +189,7 @@ async fn main() -> Result<()> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
+        .route("/assets/htmx.min.js", get(htmx_js))
         .route("/login", get(auth::routes::login))
         .route("/logout", get(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))

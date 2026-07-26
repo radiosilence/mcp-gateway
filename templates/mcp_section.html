@@ -66,7 +66,7 @@
           {%- else %}
           {{ f.options_html|safe }}
           {%- endif %}
-          <span class="mt-1 block text-xs text-slate-400 dark:text-slate-500" data-status></span>
+          {% call ui::field_status("", false) %}
         </label>
         {% endif %}{% endfor %}
       </div>

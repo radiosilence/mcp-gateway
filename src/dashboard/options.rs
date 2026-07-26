@@ -22,6 +22,34 @@ const OPTIONS_BUDGET: std::time::Duration = std::time::Duration::from_millis(600
 use crate::dashboard::{FieldOptionsTemplate, OptionView, render};
 use crate::state::AppState;
 
+/// One setting's choices, and which of them is stored.
+pub(super) struct Choices {
+    pub(super) options: Value,
+    pub(super) current: String,
+}
+
+/// Ask one backend, with the user's own credentials. Shared so the page's
+/// prefetch and the endpoint htmx calls cannot ask a different question or read
+/// the answer differently — they render the same control, so they had better.
+pub(super) async fn fetch_choices(
+    state: &AppState,
+    sub: &str,
+    mcp: &crate::config::Mcp,
+    field_id: &str,
+    query: &str,
+) -> anyhow::Result<Choices> {
+    let credentials = state
+        .store
+        .get_credentials(sub, &mcp.id, mcp.primary_field())
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("no credentials stored"))?;
+    let data = crate::backend::graphql(state, mcp, &credentials, query, None).await?;
+    Ok(Choices {
+        current: credentials.get(field_id).cloned().unwrap_or_default(),
+        options: options_of(&data),
+    })
+}
+
 /// Every connected setting's choices, fetched concurrently, keyed by MCP and
 /// field. Missing simply means it did not arrive in time.
 pub(super) async fn prefetch_options(
@@ -45,12 +73,7 @@ pub(super) async fn prefetch_options(
             tasks.spawn(async move {
                 let started = std::time::Instant::now();
                 let mcp = state.config.mcp(&mcp_id)?;
-                let credentials = state
-                    .store
-                    .get_credentials(&sub, &mcp_id, mcp.primary_field())
-                    .await
-                    .ok()??;
-                let data = crate::backend::graphql(&state, mcp, &credentials, &query, None)
+                let choices = fetch_choices(&state, &sub, mcp, &field_id, &query)
                     .await
                     .ok()?;
                 // Only the ones that beat the budget report from here; the rest
@@ -60,8 +83,7 @@ pub(super) async fn prefetch_options(
                     mcp = %mcp_id, field = %field_id, ms = started.elapsed().as_millis(),
                     "prefetched options"
                 );
-                let current = credentials.get(&field_id).cloned().unwrap_or_default();
-                Some(((mcp_id, field_id), (options_of(&data), current)))
+                Some(((mcp_id, field_id), (choices.options, choices.current)))
             });
         }
     }
@@ -208,5 +230,29 @@ mod tests {
         let data = json!([{"value": "home", "label": "Home"}]);
         let t = options_template(&data, "deleted-calendar", "caldav", "calendar");
         assert!(t.options.iter().all(|o| !o.selected));
+    }
+
+    #[test]
+    fn takes_a_plain_aliased_list_as_it_comes() {
+        let data = json!({"options": [{"value": "a"}]});
+        assert_eq!(options_of(&data), json!([{"value": "a"}]));
+    }
+
+    #[test]
+    fn unwraps_a_relay_connection() {
+        let data = json!({"options": {"totalCount": 1, "nodes": [{"value": "Home"}]}});
+        assert_eq!(options_of(&data), json!([{"value": "Home"}]));
+
+        let edges = json!({"options": {"edges": [{"node": {"value": "Home"}}]}});
+        assert_eq!(options_of(&edges), json!([{"value": "Home"}]));
+    }
+
+    #[test]
+    fn anything_else_is_no_options_rather_than_an_error() {
+        assert_eq!(options_of(&json!({})), json!([]));
+        assert_eq!(
+            options_of(&json!({"options": {"totalCount": 0}})),
+            json!([])
+        );
     }
 }

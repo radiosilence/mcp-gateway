@@ -15,6 +15,12 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   slow path is the same path rather than a second one that only runs when
   something is wrong.
 
+  Both sides of that are timed: whatever beats the budget is logged as it
+  arrives, and whatever misses is logged by the endpoint that then serves it, so
+  every fetch is accounted for without keeping abandoned work alive to measure
+  it. A page that came up short says so. 600ms is a starting guess, and this is
+  what will say whether it is the right one.
+
   The budget is the point: these are network calls to somebody else's server on
   the way to rendering, and the dashboard is what you would use to fix the
   credential that is making them slow. It waits a little for a nicer page and

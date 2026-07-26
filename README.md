@@ -1,5 +1,7 @@
 # mcp-gateway
 
+![The dashboard: each MCP the gateway fronts, its connection state, and how to add it to Claude](docs/dashboard.png)
+
 An OAuth-fronted gateway for self-hosted MCP servers. Add any of your MCPs to
 Claude (Desktop / mobile / web) as custom connectors without each one needing
 its own OAuth — the gateway authenticates the user once and injects each MCP's

@@ -3,6 +3,8 @@
 # "aqua:cloudflare/cloudflared".)
 cloudflared = "latest"
 jq = "latest"
+# The standalone CLI, so building the stylesheet needs no node toolchain.
+"github:tailwindlabs/tailwindcss" = "3.4.17"
 
 [env]
 # Dev hostnames (radiosilence.dev = dev; blit.cc = prod). Must be on a domain
@@ -11,6 +13,10 @@ jq = "latest"
 GATEWAY_HOST = "mcp.radiosilence.dev"
 AUTH_HOST = "auth.radiosilence.dev"
 TUNNEL_NAME = "mcp-gateway-dev"
+
+[tasks.css]
+description = "Rebuild the stylesheet after changing a template"
+run = "tailwindcss -c tailwind.config.js -i assets/tailwind.css -o assets/app.css --minify"
 
 [tasks.up]
 description = "Run the stack locally on http://localhost:8080"

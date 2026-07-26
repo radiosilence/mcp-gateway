@@ -23,6 +23,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use axum::Router;
+use axum::http::{HeaderValue, header};
+use axum::middleware;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, patch, post};
 use tower_governor::GovernorLayer;
 use tower_governor::governor::GovernorConfigBuilder;
@@ -35,6 +38,64 @@ use crate::config::Config;
 use crate::crypto::Cipher;
 use crate::state::AppState;
 use crate::store::Store;
+
+/// Baked into the binary rather than fetched from a CDN. These pages sit behind
+/// the login of a service that holds people's credentials, and they are typed
+/// into it in plaintext — a third-party script with DOM access there reads them
+/// as they are entered. Embedding also keeps the deployment a single artefact,
+/// with no second thing to serve or keep in step.
+const APP_CSS: &str = include_str!("../assets/app.css");
+const APP_JS: &str = include_str!("../assets/app.js");
+
+async fn app_css() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
+}
+
+async fn app_js() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        APP_JS,
+    )
+}
+
+/// Everything the pages need comes from this origin, so the policy can simply
+/// say so. No `unsafe-inline` anywhere: the stylesheet and script are served as
+/// files and no handler is written into the markup, which is the whole reason
+/// they were moved out. `data:` covers the inline SVG favicon.
+///
+/// The value of this is narrow but real — it is the difference between an
+/// injected string becoming script on a page holding credentials, and not.
+const CSP: &str = "default-src 'self'; \
+     script-src 'self'; \
+     style-src 'self'; \
+     img-src 'self' data:; \
+     connect-src 'self'; \
+     form-action 'self'; \
+     frame-ancestors 'none'; \
+     base-uri 'none'; \
+     object-src 'none'";
+
+/// Applied to every response. Harmless on the JSON and SSE the proxy returns,
+/// and cheaper to reason about than deciding per route which ones render HTML.
+async fn security_headers(request: axum::extract::Request, next: middleware::Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CSP),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    // Redundant beside frame-ancestors for anything current, and free.
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    response
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -116,6 +177,8 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/", get(dashboard::index))
         .route("/healthz", get(|| async { "ok" }))
+        .route("/assets/app.css", get(app_css))
+        .route("/assets/app.js", get(app_js))
         .route("/login", get(auth::routes::login))
         .route("/logout", get(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
@@ -142,6 +205,7 @@ async fn main() -> Result<()> {
         .route("/{id}", any(proxy::handle))
         .merge(register_routes)
         .merge(auth_routes)
+        .layer(middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -153,4 +217,53 @@ async fn main() -> Result<()> {
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The stylesheet is generated, so the thing worth guarding is that a real
+    /// one got committed — an empty or truncated build would still compile in
+    /// and only show up as an unstyled page in production.
+    /// The policy is only worth anything while it has no inline escape hatch —
+    /// which is exactly what someone adds to make a stray inline script work.
+    #[tokio::test]
+    async fn every_response_carries_the_security_headers() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let app = Router::new()
+            .route("/", get(|| async { "hi" }))
+            .layer(middleware::from_fn(security_headers));
+
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        let headers = response.headers();
+        let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+        assert!(
+            !csp.contains("unsafe-inline"),
+            "csp has an inline escape hatch"
+        );
+        assert!(!csp.contains("unsafe-eval"), "csp has an eval escape hatch");
+        assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
+        assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
+    }
+
+    #[test]
+    fn the_embedded_assets_are_real() {
+        assert!(APP_CSS.contains("box-sizing:border-box"), "no preflight");
+        assert!(APP_CSS.contains("max-w-2xl"), "utilities missing");
+        assert!(
+            APP_JS.contains("data-copy"),
+            "app.js is not the real script"
+        );
+    }
 }

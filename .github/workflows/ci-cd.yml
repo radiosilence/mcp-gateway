@@ -1,8 +1,9 @@
 name: CI/CD
 
 # Build/publish modelled on radiosilence/nano-web (native per-arch runners, no
-# QEMU). Auto-update modelled on radiosilence/blit (bump the jaritanet Pulumi
-# tag on each build so the cluster rolls to the new image).
+# QEMU). This repo builds and releases; it does not deploy. Whoever runs the
+# gateway watches its releases and decides when to move — so nothing here holds
+# a credential for anyone else's repository.
 
 # Doc-only changes don't rebuild the image or redeploy — skip the whole
 # pipeline when a push/PR touches nothing but Markdown or the licence.
@@ -209,35 +210,3 @@ jobs:
               ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-amd64 \
               ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-arm64
           done
-
-  update-deployment:
-    name: Bump jaritanet
-    runs-on: ubuntu-latest
-    needs: [manifest]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    env:
-      DEPLOYMENT_REPO: radiosilence/jaritanet
-      CONFIG_PATH: packages/infra/Pulumi.main.yaml
-      SHA_TAG: ${{ needs.manifest.outputs.sha_tag }}
-    steps:
-      - name: Checkout jaritanet
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ env.DEPLOYMENT_REPO }}
-          token: ${{ secrets.DEPLOYMENT_PAT }}
-      - name: Bump mcpGateway image tag in jaritanet
-        run: |
-          # Bail rather than let yq *create* a stub key: a mcpGateway block with
-          # no repository/hostname fails jaritanet's config parse and takes its
-          # whole deploy down.
-          if ! yq -e '.config."jaritanet:mcpGateway"' "$CONFIG_PATH" >/dev/null 2>&1; then
-            echo "no mcpGateway config in $DEPLOYMENT_REPO — refusing to create one."
-            exit 1
-          fi
-          yq eval '(.config."jaritanet:mcpGateway".image.tag) = strenv(SHA_TAG)' -i "$CONFIG_PATH"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$CONFIG_PATH"
-          git diff --cached --quiet && { echo "no change"; exit 0; }
-          git commit -m "🚀 mcp-gateway → $SHA_TAG"
-          git push

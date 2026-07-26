@@ -1,128 +1,45 @@
 //! Dashboard: log in with our OAuth (GitHub upstream), then manage the
 //! credentials for each registered MCP. An MCP declares the fields it needs
 //! (one for a bearer token, three for CalDAV), and the form is built from
-//! those. Post-Redirect-Get with a `flash` query param.
-
-use std::collections::HashMap;
+//! those. Mutations answer with the section they changed, so the page never
+//! reloads and there is no flash to carry across one.
 
 use askama::Template;
-use axum::extract::{Form, Path, Query, State};
+use axum::extract::{Form, Path, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+mod options;
+mod view;
+
+use view::*;
+
+use options::{options_fragment, options_of, prefetch_options};
+
+use crate::auth::extract::{FragmentSession, PageSession};
 use crate::auth::routes::current_session;
 use crate::config::Mcp;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use crate::store::CredentialSet;
+use crate::store::{CredentialSet, Session};
 
-#[derive(Template)]
-#[template(path = "index.html")]
-struct IndexTemplate;
-
-/// One choice offered for a backend-sourced setting.
-struct OptionView {
-    value: String,
-    label: String,
-    is_default: bool,
-    selected: bool,
-}
-
-#[derive(Template)]
-#[template(path = "field_options.html")]
-struct FieldOptionsTemplate {
-    mcp_id: String,
-    field_id: String,
-    /// Label of the backend's own default, named in the placeholder so the
-    /// empty choice says what it will actually do.
-    account_default: Option<String>,
-    options: Vec<OptionView>,
-}
-
-#[derive(Template)]
-#[template(path = "field_options_error.html")]
-struct FieldOptionsErrorTemplate {
-    error: String,
-}
-
-#[derive(Template)]
-#[template(path = "field_status.html")]
-struct FieldStatusTemplate {
-    message: String,
-    bad: bool,
-}
-
-/// One input in an MCP's credential form.
-struct FieldView {
-    id: String,
-    label: String,
-    /// `password` or `text` — secrets are never rendered back into the page.
-    input_type: String,
-    secret: bool,
-    placeholder: String,
-    /// Prefilled with the stored value when the field is not a secret (so a
-    /// server URL can be edited, not retyped). Empty for secrets.
-    value: String,
-    required: bool,
-    /// This field's choices come from the backend, so it is offered only after
-    /// the account is connected — before that there is nobody to ask.
-    from_backend: bool,
-    /// Endpoint serving those choices. Empty until credentials exist.
-    options_url: String,
-    /// The rendered control, when its choices arrived in time to put them in
-    /// the page. Empty means the page ships a placeholder and htmx fills it.
-    options_html: String,
-}
-
-struct McpView {
-    id: String,
-    name: String,
-    has_credential: bool,
-    /// Takes no credentials — connected on login, with no form to fill in and
-    /// nothing to disconnect.
-    public: bool,
-    /// Whether any field is a setting rather than a credential — shown outside
-    /// the credential form, since that is not what it is.
-    has_settings: bool,
-    updated_at: String,
-    /// Said in words, because the server has no idea what timezone the reader
-    /// is in — no request header carries one — and an exact time in the wrong
-    /// zone is worse than none. The precise value stays in the element for
-    /// anyone who wants it.
-    updated_ago: String,
-    connector_url: String,
-    claude_code_cmd: String,
-    key_help_url: String,
-    fields: Vec<FieldView>,
-}
-
-#[derive(Template)]
-#[template(path = "dashboard.html")]
-struct DashboardTemplate {
-    login: String,
-    flash: String,
-    mcps: Vec<McpView>,
-}
-
-#[derive(Deserialize)]
-pub struct FlashQuery {
-    #[serde(default)]
-    flash: String,
-}
-
-/// The credential form posts one input per configured field, so the shape
-/// isn't known at compile time.
-///
-/// A plain map, not a newtype around one: `serde_urlencoded` presents a form
-/// body as a map and has no `deserialize_newtype_struct` to unwrap it, so a
-/// wrapper is rejected at the extractor with "invalid type: map".
-pub type CredentialForm = HashMap<String, String>;
-
-fn flash_redirect(msg: &str) -> Response {
-    let enc: String = url::form_urlencoded::byte_serialize(msg.as_bytes()).collect();
-    Redirect::to(&format!("/dashboard?flash={enc}")).into_response()
+/// Re-render one MCP's section, which is the answer to every mutation on it:
+/// the badge, the timestamp and the settings all come from one place, so they
+/// cannot disagree about what just happened.
+async fn section(
+    state: &AppState,
+    session: &Session,
+    mcp: &Mcp,
+    notice: Notice,
+) -> AppResult<Response> {
+    // Only this MCP's settings, and only after the change — a new password
+    // means a different set of choices.
+    let prefetched = prefetch_options(state, &session.sub, Some(&mcp.id)).await;
+    let mut view = McpView::build(state, session, mcp, &prefetched).await?;
+    view.notice = notice;
+    Ok(render(McpSectionTemplate { m: view }))
 }
 
 pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -135,175 +52,19 @@ pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Respons
     }
 }
 
-/// How long the page will wait for every connected setting's choices before
-/// giving up on the stragglers.
-///
-/// They come from the backends, not from us, so this is a network call to
-/// somebody else's calendar server on the way to rendering. Worth doing —
-/// arriving complete beats a control that fills in afterwards — but not worth
-/// the page for. Whatever misses the budget falls back to loading over htmx,
-/// which is also what happens when a backend is refusing outright, so the slow
-/// path is the same path and gets exercised.
-const OPTIONS_BUDGET: std::time::Duration = std::time::Duration::from_millis(600);
-
-/// Every connected setting's choices, fetched concurrently, keyed by MCP and
-/// field. Missing simply means it did not arrive in time.
-async fn prefetch_options(
-    state: &AppState,
-    sub: &str,
-) -> HashMap<(String, String), (Value, String)> {
-    let mut tasks = tokio::task::JoinSet::new();
-    for m in &state.config.mcps {
-        for f in &m.fields {
-            let Some(query) = f.options_query.clone() else {
-                continue;
-            };
-            let (state, sub) = (state.clone(), sub.to_string());
-            let (mcp_id, field_id) = (m.id.clone(), f.id.clone());
-            tasks.spawn(async move {
-                let started = std::time::Instant::now();
-                let mcp = state.config.mcp(&mcp_id)?;
-                let credentials = state
-                    .store
-                    .get_credentials(&sub, &mcp_id, mcp.primary_field())
-                    .await
-                    .ok()??;
-                let data = crate::backend::graphql(&state, mcp, &credentials, &query, None)
-                    .await
-                    .ok()?;
-                // Only the ones that beat the budget report from here; the rest
-                // are abandoned, and the endpoint that then serves them times
-                // them instead. Between the two, every fetch is accounted for.
-                tracing::debug!(
-                    mcp = %mcp_id, field = %field_id, ms = started.elapsed().as_millis(),
-                    "prefetched options"
-                );
-                let current = credentials.get(&field_id).cloned().unwrap_or_default();
-                Some(((mcp_id, field_id), (options_of(&data), current)))
-            });
-        }
-    }
-
-    let wanted = tasks.len();
-    let deadline = tokio::time::Instant::now() + OPTIONS_BUDGET;
-    let mut out = HashMap::new();
-    while let Ok(Some(finished)) = tokio::time::timeout_at(deadline, tasks.join_next()).await {
-        if let Ok(Some((key, value))) = finished {
-            out.insert(key, value);
-        }
-    }
-
-    // Worth saying out loud rather than leaving as a silently emptier page: it
-    // is the signal that the budget wants revisiting, or that a backend does.
-    if out.len() < wanted {
-        tracing::info!(
-            missed = wanted - out.len(),
-            of = wanted,
-            budget_ms = OPTIONS_BUDGET.as_millis(),
-            "some settings missed the render budget and will load over htmx"
-        );
-    }
-    out
-}
-
 pub async fn dashboard(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(q): Query<FlashQuery>,
+    PageSession(session): PageSession,
 ) -> AppResult<Response> {
-    let Some(session) = current_session(&state, &headers).await else {
-        return Ok(Redirect::to("/login").into_response());
-    };
-    let base = state.config.public_url.trim_end_matches('/');
-    let prefetched = prefetch_options(&state, &session.sub).await;
+    let prefetched = prefetch_options(&state, &session.sub, None).await;
 
     let mut mcps = Vec::new();
     for m in &state.config.mcps {
-        let meta = state
-            .store
-            .credential_meta(&session.sub, &m.id)
-            .await
-            .map_err(AppError::Internal)?;
-        // A public MCP is connected the moment the user has logged in — there
-        // is nothing to store, so nothing to wait for.
-        let (has_credential, updated_at, updated_ago) = match (m.is_public(), meta) {
-            (true, _) => (true, String::new(), String::new()),
-            (false, Some(meta)) => (true, meta.updated_at_rfc3339(), meta.updated_ago()),
-            (false, None) => (false, String::new(), String::new()),
-        };
-
-        // Non-secret values are read back so they can be edited in place;
-        // secrets are never decrypted for rendering.
-        let stored = if has_credential && m.fields.iter().any(|f| !f.secret) {
-            state
-                .store
-                .get_credentials(&session.sub, &m.id, m.primary_field())
-                .await
-                .map_err(AppError::Internal)?
-        } else {
-            None
-        };
-
-        let fields: Vec<FieldView> = m
-            .fields
-            .iter()
-            .map(|f| FieldView {
-                options_html: prefetched
-                    .get(&(m.id.clone(), f.id.clone()))
-                    .map(|(options, current)| {
-                        render_to_string(options_template(options, current, &m.id, &f.id))
-                    })
-                    .unwrap_or_default(),
-                value: match f.secret {
-                    true => String::new(),
-                    false => stored
-                        .as_ref()
-                        .and_then(|s| s.get(&f.id))
-                        .cloned()
-                        .unwrap_or_default(),
-                },
-                input_type: if f.secret { "password" } else { "text" }.to_string(),
-                secret: f.secret,
-                // A default is advertised as a placeholder, not prefilled: the
-                // box stays visibly empty so it reads as "leave it alone".
-                placeholder: match (&f.hint, &f.default) {
-                    (Some(hint), _) => hint.clone(),
-                    (None, Some(default)) => format!("Default: {default}"),
-                    (None, None) => f.label.to_lowercase(),
-                },
-                from_backend: f.options_query.is_some(),
-                options_url: match (has_credential, &f.options_query) {
-                    (true, Some(_)) => format!("/dashboard/{}/options/{}", m.id, f.id),
-                    _ => String::new(),
-                },
-                id: f.id.clone(),
-                label: f.label.clone(),
-                required: f.required,
-            })
-            .collect();
-
-        let connector_url = format!("{base}/{}", m.id);
-        mcps.push(McpView {
-            claude_code_cmd: format!(
-                "claude mcp add --transport http --scope user {} {}",
-                m.id, connector_url
-            ),
-            has_settings: fields.iter().any(|f| !f.options_url.is_empty()),
-            id: m.id.clone(),
-            name: m.name.clone(),
-            has_credential,
-            public: m.is_public(),
-            updated_at,
-            updated_ago,
-            connector_url,
-            key_help_url: m.key_help_url.clone().unwrap_or_default(),
-            fields,
-        });
+        mcps.push(McpView::build(&state, &session, m, &prefetched).await?);
     }
 
     let tpl = DashboardTemplate {
         login: session.login,
-        flash: q.flash,
         mcps,
     };
     let html = tpl.render().map_err(|e| AppError::Internal(e.into()))?;
@@ -312,13 +73,10 @@ pub async fn dashboard(
 
 pub async fn set_credential(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    PageSession(session): PageSession,
     Path(mcp_id): Path<String>,
     Form(form): Form<CredentialForm>,
 ) -> AppResult<Response> {
-    let Some(session) = current_session(&state, &headers).await else {
-        return Ok(Redirect::to("/login").into_response());
-    };
     let Some(mcp) = state.config.mcp(&mcp_id) else {
         return Err(AppError::BadRequest("unknown mcp".into()));
     };
@@ -341,7 +99,9 @@ pub async fn set_credential(
                 values.insert(field.id.clone(), value);
             }
             Ok(None) => {}
-            Err(complaint) => return Ok(flash_redirect(&complaint)),
+            Err(complaint) => {
+                return section(&state, &session, mcp, Notice::wrong(complaint)).await;
+            }
         }
     }
 
@@ -352,10 +112,18 @@ pub async fn set_credential(
         .map_err(AppError::Internal)?;
 
     match sync_upstream(&state, mcp, &values, stored.as_ref()).await {
-        None => Ok(flash_redirect("Credentials saved")),
+        None => section(&state, &session, mcp, Notice::said("Saved")).await,
         // Stored either way — the proxy injects our value on every request, so
         // the gateway behaves as asked whatever the backend thinks of it.
-        Some(complaint) => Ok(flash_redirect(&format!("Credentials saved. {complaint}"))),
+        Some(complaint) => {
+            section(
+                &state,
+                &session,
+                mcp,
+                Notice::wrong(format!("Saved. {complaint}")),
+            )
+            .await
+        }
     }
 }
 
@@ -479,13 +247,10 @@ fn resolve_field(
 /// secret can only be set where the user typed it.
 pub async fn set_field(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FragmentSession(session): FragmentSession,
     Path((mcp_id, field_id)): Path<(String, String)>,
     Form(update): Form<FieldUpdate>,
 ) -> AppResult<Response> {
-    let Some(session) = current_session(&state, &headers).await else {
-        return Err(AppError::BadRequest("not signed in".into()));
-    };
     let Some(mcp) = state.config.mcp(&mcp_id) else {
         return Err(AppError::BadRequest("unknown mcp".into()));
     };
@@ -543,12 +308,9 @@ pub async fn set_field(
 /// free text if this fails.
 pub async fn field_options(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FragmentSession(session): FragmentSession,
     Path((mcp_id, field_id)): Path<(String, String)>,
 ) -> AppResult<Response> {
-    let Some(session) = current_session(&state, &headers).await else {
-        return Err(AppError::BadRequest("not signed in".into()));
-    };
     let Some(mcp) = state.config.mcp(&mcp_id) else {
         return Err(AppError::BadRequest("unknown mcp".into()));
     };
@@ -590,161 +352,29 @@ pub async fn field_options(
     }
 }
 
-/// The `<option>` list for a setting, with the entries the backend marked
-/// unusable dropped and the stored value preselected.
-fn options_fragment(options: &Value, current: &str, mcp_id: &str, field_id: &str) -> Response {
-    render(options_template(options, current, mcp_id, field_id))
-}
-
-fn options_template(
-    options: &Value,
-    current: &str,
-    mcp_id: &str,
-    field_id: &str,
-) -> FieldOptionsTemplate {
-    let entries = options.as_array().cloned().unwrap_or_default();
-    let account_default = entries
-        .iter()
-        .find(|o| o["isDefault"].as_bool().unwrap_or(false))
-        .and_then(|o| o["label"].as_str())
-        .map(str::to_string);
-
-    let options = entries
-        .iter()
-        .filter(|o| {
-            !o["disabled"].as_bool().unwrap_or(false)
-                && o["supportsEvents"].as_bool().unwrap_or(true)
-        })
-        .map(|o| {
-            let value = o["value"].as_str().unwrap_or_default().to_string();
-            let label = o["label"].as_str().unwrap_or_default().to_string();
-            OptionView {
-                selected: !current.is_empty() && (value == current || label == current),
-                is_default: o["isDefault"].as_bool().unwrap_or(false),
-                value,
-                label,
-            }
-        })
-        .collect();
-
-    FieldOptionsTemplate {
-        mcp_id: mcp_id.to_string(),
-        field_id: field_id.to_string(),
-        account_default,
-        options,
-    }
-}
-
 fn status_fragment(message: String, bad: bool) -> Response {
     render(FieldStatusTemplate { message, bad })
 }
 
 /// A rendering failure here is a bug in a template, not something the user can
 /// act on, so it surfaces as text rather than taking the whole page down.
-/// Empty on failure: a fragment that will not render is a template bug, and the
-/// page is more use with a placeholder in that slot than not at all.
-fn render_to_string<T: Template>(template: T) -> String {
-    template.render().unwrap_or_else(|e| {
-        tracing::error!(error = %e, "fragment render failed");
-        String::new()
-    })
-}
-
-fn render<T: Template>(template: T) -> Response {
-    match template.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => {
-            tracing::error!(error = %e, "fragment render failed");
-            Html("<span data-status>Could not render</span>").into_response()
-        }
-    }
-}
-
-/// The options a registry query returned, as a flat array.
-///
-/// A query may alias a plain list straight to `options`, or land on a Relay
-/// connection — `caldav-cli` returns one for every collection — in which case
-/// the rows are a level down. Both are unwrapped here so the registry stays a
-/// query and nothing else.
-fn options_of(data: &Value) -> Value {
-    let options = match data.get("options") {
-        Some(options) => options,
-        None => return json!([]),
-    };
-    if options.is_array() {
-        return options.clone();
-    }
-    if let Some(nodes) = options.get("nodes").filter(|n| n.is_array()) {
-        return nodes.clone();
-    }
-    if let Some(edges) = options.get("edges").and_then(Value::as_array) {
-        return edges
-            .iter()
-            .filter_map(|e| e.get("node").cloned())
-            .collect();
-    }
-    json!([])
-}
-
 pub async fn delete_credential(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    PageSession(session): PageSession,
     Path(mcp_id): Path<String>,
 ) -> AppResult<Response> {
-    let Some(session) = current_session(&state, &headers).await else {
-        return Ok(Redirect::to("/login").into_response());
-    };
     state
         .store
         .delete_credential(&session.sub, &mcp_id)
         .await
         .map_err(AppError::Internal)?;
-    Ok(flash_redirect("Credentials deleted"))
+    let mcp = mcp_or_404(&state, &mcp_id)?;
+    section(&state, &session, mcp, Notice::said("Disconnected")).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The shaping that used to live in the browser: which entries are offered
-    /// at all, which is marked as the account's own, and which is preselected.
-    #[test]
-    fn options_are_filtered_labelled_and_preselected() {
-        let data = json!([
-            {"value": "work", "label": "Work", "isDefault": true},
-            {"value": "ro", "label": "Read only", "disabled": true},
-            {"value": "tasks", "label": "Tasks", "supportsEvents": false},
-            {"value": "home", "label": "Home"},
-        ]);
-        let t = options_template(&data, "home", "caldav", "calendar");
-
-        // The placeholder names the backend's own default so the empty choice
-        // says what picking it will actually do.
-        assert_eq!(t.account_default.as_deref(), Some("Work"));
-
-        let offered: Vec<&str> = t.options.iter().map(|o| o.value.as_str()).collect();
-        assert_eq!(offered, ["work", "home"], "read-only and task-only dropped");
-
-        assert!(t.options[0].is_default);
-        assert!(!t.options[0].selected);
-        assert!(t.options[1].selected, "the stored value is preselected");
-
-        // The fragment replaces the skeleton outright, so it carries the
-        // control and must address the right endpoint itself.
-        let html = t.render().unwrap();
-        assert!(html.contains("— account default"));
-        assert!(html.contains(r#"value="home" selected"#));
-        assert!(html.contains(r#"hx-patch="/dashboard/caldav/field/calendar""#));
-    }
-
-    /// A stored value that no longer exists upstream must not silently select
-    /// something else.
-    #[test]
-    fn nothing_is_preselected_when_the_stored_value_is_gone() {
-        let data = json!([{"value": "home", "label": "Home"}]);
-        let t = options_template(&data, "deleted-calendar", "caldav", "calendar");
-        assert!(t.options.iter().all(|o| !o.selected));
-    }
 
     fn field(id: &str, secret: bool, required: bool) -> crate::config::CredentialField {
         serde_json::from_value(json!({

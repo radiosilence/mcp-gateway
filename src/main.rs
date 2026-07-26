@@ -23,6 +23,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use axum::Router;
+use axum::http::header;
+use axum::response::IntoResponse;
 use axum::routing::{any, get, patch, post};
 use tower_governor::GovernorLayer;
 use tower_governor::governor::GovernorConfigBuilder;
@@ -35,6 +37,25 @@ use crate::config::Config;
 use crate::crypto::Cipher;
 use crate::state::AppState;
 use crate::store::Store;
+
+/// Baked into the binary rather than fetched from a CDN. These pages sit behind
+/// the login of a service that holds people's credentials, and they are typed
+/// into it in plaintext — a third-party script with DOM access there reads them
+/// as they are entered. Embedding also keeps the deployment a single artefact,
+/// with no second thing to serve or keep in step.
+const APP_CSS: &str = include_str!("../assets/app.css");
+const APP_JS: &str = include_str!("../assets/app.js");
+
+async fn app_css() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
+}
+
+async fn app_js() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        APP_JS,
+    )
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -116,6 +137,8 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/", get(dashboard::index))
         .route("/healthz", get(|| async { "ok" }))
+        .route("/assets/app.css", get(app_css))
+        .route("/assets/app.js", get(app_js))
         .route("/login", get(auth::routes::login))
         .route("/logout", get(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
@@ -153,4 +176,22 @@ async fn main() -> Result<()> {
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The stylesheet is generated, so the thing worth guarding is that a real
+    /// one got committed — an empty or truncated build would still compile in
+    /// and only show up as an unstyled page in production.
+    #[test]
+    fn the_embedded_assets_are_real() {
+        assert!(APP_CSS.contains("box-sizing:border-box"), "no preflight");
+        assert!(APP_CSS.contains("max-w-2xl"), "utilities missing");
+        assert!(
+            APP_JS.contains("data-copy"),
+            "app.js is not the real script"
+        );
+    }
 }

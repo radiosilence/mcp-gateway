@@ -210,6 +210,7 @@ const RESERVED_IDS: &[&str] = &[
     "dashboard",
     "healthz",
     "auth",
+    "assets",
     ".well-known",
 ];
 

@@ -20,8 +20,9 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sending someone to rotate a working credential is worse than admitting
   ignorance — so anything unrecognised is unknown.
 
-- **Fields say whether they hold anything.** A secret is never rendered back, so
-  a set password and an empty one looked the same. They no longer do.
+- **Secret fields say whether they hold anything.** A password box looks the
+  same whether one is stored or not, so it now says. Only for secrets: a visible
+  field already shows its own value.
 
 ## [0.4.1] - 2026-07-26
 

@@ -1,6 +1,6 @@
 [package]
 name = "mcp-gateway"
-version = "0.5.4"
+version = "0.6.0"
 edition = "2024"
 description = "OAuth-fronted gateway for self-hosted MCP servers: one AS + credential vault + dashboard, routing to per-MCP backends with the right secret injected"
 repository = "https://github.com/radiosilence/mcp-gateway"
@@ -15,7 +15,7 @@ path = "src/main.rs"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace"] }
+tower-http = { version = "0.7", features = ["trace"] }
 tower_governor = { version = "0.8", default-features = false, features = [
   "axum",
   "tracing",
@@ -23,9 +23,9 @@ tower_governor = { version = "0.8", default-features = false, features = [
 http = "1"
 
 # Storage
-sqlx = { version = "0.8", default-features = false, features = [
+sqlx = { version = "0.9", default-features = false, features = [
   "runtime-tokio",
-  "tls-rustls-ring",
+  "tls-rustls-aws-lc-rs",
   "postgres",
   "macros",
   "migrate",
@@ -33,20 +33,22 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 
 # Crypto: envelope-encrypt stored credentials at rest
-chacha20poly1305 = "0.10"
-rand = "0.8"
-base64 = "0.22"
+chacha20poly1305 = "0.11"
+rand = "0.10"
+base64 = "0.23"
 
 # HTTP client for Hydra introspection/admin, GitHub OAuth, and proxying MCP
 # traffic to backends (streaming responses for MCP's SSE).
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
+  "form",
   "json",
-  "rustls-tls",
+  "query",
+  "rustls",
   "stream",
 ] }
 
 # Templating for the dashboard
-askama = "0.12"
+askama = "0.16"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

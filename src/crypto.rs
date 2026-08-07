@@ -9,8 +9,8 @@
 
 use anyhow::{Context, Result, anyhow};
 use base64::Engine;
-use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
-use chacha20poly1305::{AeadCore, XChaCha20Poly1305, XNonce};
+use chacha20poly1305::aead::{Aead, Generate, KeyInit, Nonce};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 
 const B64: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::STANDARD;
@@ -22,15 +22,16 @@ pub struct Cipher {
 
 impl Cipher {
     pub fn new(key: &[u8]) -> Result<Self> {
-        let key = chacha20poly1305::Key::from_slice(key);
+        let key = chacha20poly1305::Key::try_from(key)
+            .map_err(|_| anyhow!("key must be exactly 32 bytes"))?;
         Ok(Self {
-            inner: XChaCha20Poly1305::new(key),
+            inner: XChaCha20Poly1305::new(&key),
         })
     }
 
     /// Encrypt plaintext → base64(`nonce || ciphertext`).
     pub fn seal(&self, plaintext: &str) -> Result<String> {
-        let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+        let nonce = Nonce::<XChaCha20Poly1305>::try_generate().context("no system randomness")?;
         let ciphertext = self
             .inner
             .encrypt(&nonce, plaintext.as_bytes())
@@ -47,10 +48,10 @@ impl Cipher {
             .context("stored token not valid base64")?;
         anyhow::ensure!(blob.len() > 24, "stored token too short");
         let (nonce_bytes, ciphertext) = blob.split_at(24);
-        let nonce = XNonce::from_slice(nonce_bytes);
+        let nonce = XNonce::try_from(nonce_bytes).context("stored token nonce malformed")?;
         let plaintext = self
             .inner
-            .decrypt(nonce, ciphertext)
+            .decrypt(&nonce, ciphertext)
             .map_err(|e| anyhow!("decrypt failed (wrong key or tampered data): {e}"))?;
         String::from_utf8(plaintext).context("decrypted token not valid UTF-8")
     }

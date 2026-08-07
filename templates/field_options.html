@@ -6,7 +6,7 @@
 <select name="value"
         hx-patch="/dashboard/{{ mcp_id }}/field/{{ field_id }}" hx-trigger="change"
         hx-target="next [data-status]" hx-swap="outerHTML"
-        class="{% call ui::field_control() %}">
+        class="{% call ui::field_control() %}{% endcall %}">
   <option value="">{% if let Some(d) = account_default %}Account default ({{ d }}){% else %}Account default{% endif %}</option>
 {%- for o in options %}
   <option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}{% if o.is_default %} — account default{% endif %}</option>

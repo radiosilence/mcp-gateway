@@ -8,7 +8,6 @@
 
 use anyhow::Result;
 use base64::Engine;
-use rand::RngCore;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
@@ -29,7 +28,7 @@ pub struct OAuthFlow {
 
 fn new_id() -> String {
     let mut b = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut b);
+    rand::fill(&mut b);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
 }
 

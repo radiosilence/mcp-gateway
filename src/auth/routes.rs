@@ -11,7 +11,6 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
 use base64::Engine;
-use rand::RngCore;
 use serde::Deserialize;
 
 use super::cookie::{self, OAUTH_COOKIE, SESSION_COOKIE};
@@ -25,7 +24,7 @@ const SESSION_TTL: i64 = 7 * 24 * 3600; // 1 week
 
 fn random_token() -> String {
     let mut b = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut b);
+    rand::fill(&mut b);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
 }
 

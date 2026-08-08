@@ -48,7 +48,7 @@ Everything else stays as in compose. The deltas:
   and `SERVE_PUBLIC_CORS_ENABLED` as needed.
 - **Secrets from the secret backend** (SOPS/Vault/sealed-secrets), never inline:
   `POSTGRES_PASSWORD`, `DATABASE_URL`, Hydra `DSN`, `SECRETS_SYSTEM`,
-  `TOKEN_ENC_KEY` (32-byte base64), `GH_CLIENT_ID/SECRET`. The
+  `TOKEN_ENC_KEY` (32-byte base64), `OIDC_CLIENT_SECRET`. The
   `TOKEN_ENC_KEY` is the one that unlocks every stored credential — tightest
   RBAC, never in an image or in git.
 - **Access tokens stay opaque** (Hydra default; we introspect). Do not set
@@ -57,7 +57,12 @@ Everything else stays as in compose. The deltas:
   pods scale independently. Postgres single instance, small volume (state is
   disposable: lose it → users re-paste keys).
 
-## GitHub OAuth app
+## Registering with the login provider
 
-One app per environment (GitHub allows one callback URL each):
-callback = `${PUBLIC_URL}/auth/github/callback`. Device Flow: off.
+This gateway is an ordinary relying party: it needs a client id, a secret and a
+redirect URI of `${PUBLIC_URL}/auth/callback` at the issuer. In a deployment
+that generates those (as jaritanet's does, deriving the redirect from the
+hostname the service already publishes), there is nothing to do here by hand.
+
+There is no GitHub OAuth app any more. Which upstream vouches for a person is
+the login provider's business, and nothing here changes when that answer does.

@@ -12,7 +12,6 @@ mod crypto;
 mod dashboard;
 mod error;
 mod proxy;
-mod register;
 mod state;
 mod store;
 mod well_known;
@@ -119,13 +118,6 @@ async fn main() -> Result<()> {
     let config = Config::from_env()?;
     let bind_addr = config.bind_addr.clone();
 
-    if config.github_allowlist.is_empty() {
-        tracing::warn!(
-            "GH_ALLOWED is empty — ANY GitHub user can authenticate. Set it \
-             to a comma-separated list of allowed logins before public deploy."
-        );
-    }
-
     let cipher = Cipher::new(&config.token_enc_key)?;
     let store = Store::connect(&config.database_url, cipher).await?;
     store.migrate().await?;
@@ -144,16 +136,10 @@ async fn main() -> Result<()> {
         hydra,
     };
 
-    // Rate limiting: only on the abuse-prone entry points (DCR + the GitHub
-    // OAuth bounce), keyed on the client IP as seen through Traefik
+    // Rate limiting: only on the abuse-prone entry point — the bounce out to
+    // the issuer and back — keyed on the client IP as seen through Traefik
     // (X-Forwarded-For / X-Real-IP), never the proxy peer address. The MCP
     // proxy routes and /healthz are deliberately left unthrottled.
-    let register_governor = GovernorConfigBuilder::default()
-        .per_second(10)
-        .burst_size(5)
-        .key_extractor(SmartIpKeyExtractor)
-        .finish()
-        .expect("valid governor config for /register");
     let auth_governor = GovernorConfigBuilder::default()
         .per_second(2)
         .burst_size(10)
@@ -164,24 +150,17 @@ async fn main() -> Result<()> {
     // governor's keyed rate limiter accumulates one entry per client IP;
     // periodically drop entries with no recent activity so it doesn't grow
     // unbounded.
-    let register_limiter = register_governor.limiter().clone();
     let auth_limiter = auth_governor.limiter().clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
-            register_limiter.retain_recent();
             auth_limiter.retain_recent();
         }
     });
 
-    let register_routes = Router::new()
-        .route("/register", post(register::register))
-        .layer(GovernorLayer::new(register_governor));
-
     let auth_routes = Router::new()
-        .route("/auth/login", get(auth::routes::hydra_login))
-        .route("/auth/github/callback", get(auth::routes::github_callback))
+        .route("/auth/callback", get(auth::routes::callback))
         .layer(GovernorLayer::new(auth_governor));
 
     let app = Router::new()
@@ -206,7 +185,6 @@ async fn main() -> Result<()> {
             "/dashboard/{mcp_id}/delete",
             post(dashboard::delete_credential),
         )
-        .route("/auth/consent", get(auth::routes::hydra_consent))
         .route(
             "/.well-known/oauth-protected-resource",
             get(well_known::protected_resource),
@@ -214,7 +192,6 @@ async fn main() -> Result<()> {
         // MCPs live at the root (`/fastmail`); a reserved-id guard at config
         // load keeps them from shadowing the gateway's own routes above.
         .route("/{id}", any(proxy::handle))
-        .merge(register_routes)
         .merge(auth_routes)
         .layer(middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())

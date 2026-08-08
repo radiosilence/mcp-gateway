@@ -46,15 +46,17 @@ not that the route is open.
 flowchart LR
   C["Claude<br/>Desktop · Code · web"]
 
-  subgraph ns["gateway namespace"]
+  subgraph ns["cluster namespace"]
     G["gateway<br/>axum, N pods"]
     H["Hydra<br/>OAuth AS"]
+    A["auth<br/>login + consent provider"]
     DB[("Postgres<br/>encrypted creds")]
     B["backend MCP pods<br/>fastmail-cli · caldav-cli"]
   end
 
   C -->|"① OAuth: PKCE, DCR"| H
-  H -.->|"login + consent<br/>delegated back"| G
+  H -.->|"login + consent<br/>delegated out"| A
+  G -.->|"dashboard login<br/>(ordinary client)"| H
   C -->|"② Bearer token"| G
   G -->|"introspect → sub"| H
   G -->|"lookup enc creds"| DB
@@ -62,9 +64,14 @@ flowchart LR
 ```
 
 - **Hydra** is the only thing serving OAuth. The gateway publishes
-  protected-resource metadata pointing at it and proxies Dynamic Client
-  Registration (`/register`) to Hydra's admin API — Claude auto-registers, so
-  DCR stays open.
+  protected-resource metadata pointing at it, and Claude discovers Dynamic
+  Client Registration from there — at the login provider, not here.
+- **The login provider** answers the login and consent challenges Hydra
+  delegates, and decides who may sign in at all. It is a separate service
+  because Hydra takes one for the whole authorization server: while it lived
+  here, this gateway was the login screen for every client of that Hydra, and
+  an unhealthy replica of it was a failed login somewhere unrelated. This
+  gateway is now an ordinary client of it, like any other.
 - **The gateway** validates the opaque bearer by introspection (no JWT ever
   reaches a client), looks up the caller's per-MCP key, and reverse-proxies
   `/{id}` to that MCP's backend pod, injecting the key as the MCP's own header.
@@ -79,8 +86,9 @@ flowchart LR
 
 ```sh
 cp .env.example .env
-# create a GitHub OAuth app (callback http://localhost:8080/auth/github/callback)
-# and fill GH_CLIENT_ID / GH_CLIENT_SECRET; set a real TOKEN_ENC_KEY:
+# register this gateway at the login provider (redirect
+# http://localhost:8080/auth/callback), fill OIDC_CLIENT_ID / OIDC_CLIENT_SECRET
+# and point AUTH_URL at it; set a real TOKEN_ENC_KEY:
 #   openssl rand -base64 32
 docker compose up --build
 ```
@@ -103,8 +111,8 @@ Claude's connector is fetched by Anthropic's servers, not your machine, so
 Set `GATEWAY_HOST` / `AUTH_HOST` (in `mise.toml` or per-invocation) to two
 hostnames on a domain you control — one for the gateway, one for Hydra. Then:
 
-1. Point the GitHub OAuth app's callback at
-   `https://<GATEWAY_HOST>/auth/github/callback`.
+1. Register this gateway as a client at the login provider, with redirect URI
+   `https://<GATEWAY_HOST>/auth/callback`.
 2. `mise run tunnel` — provisions the tunnel + DNS (one-time browser
    `cloudflared tunnel login` if not already), writes `cloudflared/`, and brings
    the stack up with the tunnel URLs wired in automatically.
@@ -127,8 +135,9 @@ All via env (see `.env.example`). Notable:
 |-----|---------|
 | `PUBLIC_URL` | browser/Claude-facing base of the gateway |
 | `TOKEN_ENC_KEY` | 32-byte base64 key; the only thing protecting stored credentials |
-| `HYDRA_ISSUER` | browser/Claude-facing Hydra URL; advertised in protected-resource metadata |
-| `HYDRA_ADMIN_URL` | Hydra admin API (introspection, login/consent, DCR client-create) — cluster-internal only |
+| `HYDRA_ISSUER` | browser/Claude-facing Hydra URL; advertised in protected-resource metadata, and where a dashboard login is sent |
+| `HYDRA_ADMIN_URL` | Hydra admin API — introspection only — cluster-internal |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | this gateway's own registration at the issuer; the login provider generates them |
 | `MCP_REGISTRY` | the MCP registry document itself (YAML or JSON) — required |
 
 ### MCP registry (`MCP_REGISTRY`)
@@ -311,22 +320,23 @@ semver image tags. There is no tag to push by hand.
 
 Built to be internet-facing. The load-bearing pieces:
 
-- **Login allowlist** (`GH_ALLOWED`) — comma-separated GitHub logins permitted
-  to authenticate, enforced in the OAuth callback. DCR is public (Claude
-  requires it) and consent is auto-granted, so this allowlist is what stops a
-  stranger who registered a client from ever getting a token. **Leaving it empty
-  lets _any_ GitHub account in** — the gateway logs a loud warning at boot but
-  still starts, so set it before you expose anything.
+- **The login allowlist is not here.** DCR is public because Claude requires it,
+  so what stops a stranger who registered a client from getting a token is that
+  tokens issue only to people the login provider admits. That check lives there,
+  once, for every service behind it — a second copy here would be a second thing
+  to keep in step and a second way to lock somebody out. Reaching this gateway
+  with a valid token *is* the check having passed.
 - **Opaque tokens** — access tokens are introspected at Hydra per request; no
   JWT reaches a client, and tokens are revocable.
-- **Per-IP rate limiting** on `/register` and the auth routes (forwarded-IP
-  aware, since a reverse proxy fronts this).
+- **Per-IP rate limiting** on the auth routes (forwarded-IP aware, since a
+  reverse proxy fronts this).
 - **Credentials encrypted at rest** — per-user MCP keys are sealed with
   XChaCha20-Poly1305. `TOKEN_ENC_KEY` is the only thing protecting them: keep it
   in a real secret store, never in the image or git. Rotating it orphans stored
   keys (users re-paste) — acceptable given disposable state, but deliberate.
-- **Hydra admin API is never exposed** — introspection, login/consent and DCR
-  client-create use the cluster-internal admin port only.
+- **Hydra admin API is never exposed** — introspection uses the
+  cluster-internal admin port only. It answers for any token without
+  authenticating the caller.
 - **Custodial by nature** — the gateway holds credentials for every user and MCP
   (full-mailbox Fastmail tokens; iCloud app passwords, which grant calendar and
   contacts access to the Apple ID). Tight RBAC on the secret and the DB is on

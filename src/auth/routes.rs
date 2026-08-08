@@ -1,10 +1,14 @@
 //! Browser-facing auth routes:
-//! - `/login`, `/logout`         — dashboard session (our own)
-//! - `/auth/login`               — Hydra login provider callback
-//! - `/auth/consent`             — Hydra consent provider callback
-//! - `/auth/github/callback`     — GitHub OAuth return (serves both flows)
+//! - `/login`, `/logout`   — the dashboard session
+//! - `/auth/callback`      — the issuer's return leg
 //!
-//! All session/flow state is server-side; cookies carry only opaque ids.
+//! All session and flow state is server-side; cookies carry only opaque ids.
+//!
+//! This used to be two flows through one callback: the dashboard's own GitHub
+//! OAuth, and the login/consent provider Hydra delegated to. The provider moved
+//! out to its own service, so what is left is an ordinary relying party — it
+//! sends the browser to the issuer and reads back an identity, and it no longer
+//! knows what GitHub is or who is allowed in.
 
 use axum::body::Body;
 use axum::extract::{Query, State};
@@ -14,12 +18,12 @@ use base64::Engine;
 use serde::Deserialize;
 
 use super::cookie::{self, OAUTH_COOKIE, SESSION_COOKIE};
-use super::github;
+use super::oidc;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::Session;
 
-const OAUTH_FLOW_TTL: i64 = 600; // 10 min to complete the GitHub round-trip
+const OAUTH_FLOW_TTL: i64 = 600; // 10 min to complete the round-trip
 const SESSION_TTL: i64 = 7 * 24 * 3600; // 1 week
 
 fn random_token() -> String {
@@ -49,28 +53,19 @@ fn redirect(location: &str, cookies: &[String]) -> Response {
     resp
 }
 
-/// Create an OAuth flow row and return the cookie carrying its id.
-async fn begin_github(
-    state: &AppState,
-    login_challenge: Option<&str>,
-) -> AppResult<(String, String)> {
+/// Start a dashboard login: send the browser to the issuer.
+pub async fn login(State(state): State<AppState>) -> AppResult<Response> {
     let csrf = random_token();
+    let (verifier, challenge) = oidc::pkce();
     let flow_id = state
         .store
-        .create_oauth_flow(&csrf, login_challenge, OAUTH_FLOW_TTL)
+        .create_oauth_flow(&csrf, &verifier, OAUTH_FLOW_TTL)
         .await
         .map_err(AppError::Internal)?;
-    let url = github::authorize_url(&state.config, &csrf);
-    let cookie = cookie::set_cookie(OAUTH_COOKIE, &flow_id, OAUTH_FLOW_TTL);
-    Ok((url, cookie))
-}
-
-// ---- Dashboard session ----
-
-/// Start a dashboard login: bounce through GitHub (no Hydra challenge).
-pub async fn login(State(state): State<AppState>) -> AppResult<Response> {
-    let (url, cookie) = begin_github(&state, None).await?;
-    Ok(redirect(&url, &[cookie]))
+    Ok(redirect(
+        &oidc::authorize_url(&state.config, &csrf, &challenge),
+        &[cookie::set_cookie(OAUTH_COOKIE, &flow_id, OAUTH_FLOW_TTL)],
+    ))
 }
 
 pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -79,70 +74,30 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
     {
         let _ = state.store.delete_session(id).await;
     }
+    // Only this gateway's session. The issuer's is its own, and ending it for
+    // every other service because somebody left this dashboard would be a
+    // surprise rather than a courtesy.
     redirect("/", &[cookie::clear_cookie(SESSION_COOKIE)])
 }
 
-// ---- Hydra login provider ----
-
 #[derive(Deserialize)]
-pub struct LoginQuery {
-    login_challenge: String,
-}
-
-/// Hydra redirects here to have us authenticate the user. We bounce to GitHub,
-/// carrying the login_challenge in the server-side flow row.
-pub async fn hydra_login(
-    State(state): State<AppState>,
-    Query(q): Query<LoginQuery>,
-) -> AppResult<Response> {
-    let (url, cookie) = begin_github(&state, Some(&q.login_challenge)).await?;
-    Ok(redirect(&url, &[cookie]))
-}
-
-// ---- Hydra consent provider ----
-
-#[derive(Deserialize)]
-pub struct ConsentQuery {
-    consent_challenge: String,
-}
-
-/// Auto-grant consent (single-tenant tool, no consent screen).
-pub async fn hydra_consent(
-    State(state): State<AppState>,
-    Query(q): Query<ConsentQuery>,
-) -> AppResult<Response> {
-    let req = state
-        .hydra
-        .get_consent(&q.consent_challenge)
-        .await
-        .map_err(|e| AppError::Upstream(e.to_string()))?;
-    let redirect_to = state
-        .hydra
-        .accept_consent(&q.consent_challenge, &req)
-        .await
-        .map_err(|e| AppError::Upstream(e.to_string()))?;
-    Ok(redirect(&redirect_to, &[]))
-}
-
-// ---- GitHub callback (both flows) ----
-
-#[derive(Deserialize)]
-pub struct GithubCallback {
+pub struct Callback {
     code: String,
     state: String,
 }
 
-pub async fn github_callback(
+pub async fn callback(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(q): Query<GithubCallback>,
+    Query(q): Query<Callback>,
 ) -> AppResult<Response> {
-    // Recover and consume the one-shot OAuth flow row.
-    let cookies = headers
+    // Recover and consume the one-shot flow row: a replayed callback finds
+    // nothing rather than a second usable flow.
+    let flow_id = headers
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())
+        .and_then(|c| cookie::read_cookie(c, OAUTH_COOKIE))
         .ok_or(AppError::Unauthorized)?;
-    let flow_id = cookie::read_cookie(cookies, OAUTH_COOKIE).ok_or(AppError::Unauthorized)?;
     let flow = state
         .store
         .take_oauth_flow(flow_id)
@@ -154,45 +109,25 @@ pub async fn github_callback(
         return Err(AppError::BadRequest("state mismatch".into()));
     }
 
-    let (sub, login) = github::exchange_code(&state.config, &state.http, &q.code)
+    // No allowlist check here any more. A token issues only to somebody the
+    // provider admitted, so reaching this point with a valid code *is* the
+    // check — and a second copy of the list here is a second thing to keep in
+    // step and a second way to lock somebody out.
+    let identity = oidc::exchange_code(&state.config, &state.http, &q.code, &flow.verifier)
         .await
         .map_err(|e| AppError::Upstream(e.to_string()))?;
 
-    // Identity gate: only allowlisted GitHub logins may authenticate. This is
-    // the control that makes public DCR safe — a registered client is useless
-    // without a token, and tokens only issue to allowlisted users.
-    if !state.config.github_login_allowed(&login) {
-        tracing::warn!(%login, "rejected login: not in GH_ALLOWED");
-        return Err(AppError::Unauthorized);
-    }
+    let session_id = state
+        .store
+        .create_session(&identity.subject, &identity.login, SESSION_TTL)
+        .await
+        .map_err(AppError::Internal)?;
 
-    match flow.login_challenge {
-        // Servicing a Hydra login: tell Hydra who this is.
-        Some(lc) => {
-            let redirect_to = state
-                .hydra
-                .accept_login(&lc, &sub)
-                .await
-                .map_err(|e| AppError::Upstream(e.to_string()))?;
-            Ok(redirect(
-                &redirect_to,
-                &[cookie::clear_cookie(OAUTH_COOKIE)],
-            ))
-        }
-        // Dashboard login: create a server-side session.
-        None => {
-            let session_id = state
-                .store
-                .create_session(&sub, &login, SESSION_TTL)
-                .await
-                .map_err(AppError::Internal)?;
-            Ok(redirect(
-                "/dashboard",
-                &[
-                    cookie::clear_cookie(OAUTH_COOKIE),
-                    cookie::set_cookie(SESSION_COOKIE, &session_id, SESSION_TTL),
-                ],
-            ))
-        }
-    }
+    Ok(redirect(
+        "/dashboard",
+        &[
+            cookie::clear_cookie(OAUTH_COOKIE),
+            cookie::set_cookie(SESSION_COOKIE, &session_id, SESSION_TTL),
+        ],
+    ))
 }

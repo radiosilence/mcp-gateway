@@ -163,19 +163,18 @@ pub struct Config {
     pub database_url: String,
     /// 32-byte key for XChaCha20-Poly1305, base64 (standard) encoded.
     pub token_enc_key: Vec<u8>,
-    /// Hydra's public issuer URL — what Claude uses to reach the AS, advertised
-    /// in the protected-resource metadata, e.g. `https://auth.radiosilence.dev`.
+    /// Hydra's public issuer URL. Two roles, both as a client of it: what MCP
+    /// clients are pointed at in the protected-resource metadata, and where
+    /// this gateway sends a browser to have somebody signed in.
     pub hydra_issuer: String,
     /// Hydra admin API base, cluster-internal only, e.g. `http://hydra-admin:4445`.
     /// Used for token introspection and the login/consent handshake.
     pub hydra_admin_url: String,
-    /// GitHub OAuth app credentials (upstream identity).
-    pub github_client_id: String,
-    pub github_client_secret: String,
-    /// Allowlist of GitHub logins (lowercased) permitted to authenticate. Empty
-    /// = allow anyone (dev only). On a public deployment this MUST be set, or
-    /// anyone with a GitHub account can log in and store their own credentials.
-    pub github_allowlist: Vec<String>,
+    /// This gateway's own registration at the issuer, as an ordinary relying
+    /// party. Generated and registered by the login provider rather than typed
+    /// here, so a redirect URI cannot drift from the hostname it belongs to.
+    pub oidc_client_id: String,
+    pub oidc_client_secret: String,
     /// Registry of backend MCPs this gateway fronts.
     pub mcps: Vec<Mcp>,
 }
@@ -203,28 +202,23 @@ impl Config {
             token_enc_key,
             hydra_issuer: env("HYDRA_ISSUER")?,
             hydra_admin_url: env("HYDRA_ADMIN_URL")?,
-            github_client_id: env("GH_CLIENT_ID")?,
-            github_client_secret: env("GH_CLIENT_SECRET")?,
-            github_allowlist: env_or("GH_ALLOWED", "")
-                .split(',')
-                .map(|s| s.trim().to_lowercase())
-                .filter(|s| !s.is_empty())
-                .collect(),
+            oidc_client_id: env("OIDC_CLIENT_ID")?,
+            oidc_client_secret: env("OIDC_CLIENT_SECRET")?,
             mcps: load_registry(&env("MCP_REGISTRY")?)?,
         })
     }
 
-    /// Whether a GitHub login may authenticate. Empty allowlist ⇒ anyone (dev).
-    pub fn github_login_allowed(&self, login: &str) -> bool {
-        self.github_allowlist.is_empty() || self.github_allowlist.contains(&login.to_lowercase())
+    pub fn oidc_issuer(&self) -> &str {
+        self.hydra_issuer.trim_end_matches('/')
     }
 
-    /// The GitHub OAuth callback URL registered with the GitHub app.
-    pub fn github_redirect_uri(&self) -> String {
-        format!(
-            "{}/auth/github/callback",
-            self.public_url.trim_end_matches('/')
-        )
+    /// Where the issuer sends the browser back.
+    ///
+    /// Derived from `PUBLIC_URL` rather than configured, and the login provider
+    /// derives the copy it allowlists from the same hostname — so the two are
+    /// the same string by construction rather than by being kept in step.
+    pub fn oidc_redirect_uri(&self) -> String {
+        format!("{}/auth/callback", self.public_url.trim_end_matches('/'))
     }
 
     pub fn mcp(&self, id: &str) -> Option<&Mcp> {

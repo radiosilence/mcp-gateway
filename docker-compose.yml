@@ -2,8 +2,10 @@
 # Add a custom connector in Claude pointing at http://localhost:8080/mcp and
 # the whole OAuth dance runs locally.
 #
-# Prereq: copy .env.example → .env and fill GH_CLIENT_ID/SECRET (GitHub OAuth
-# app with callback http://localhost:8080/auth/github/callback).
+# Prereq: copy .env.example → .env, and have the login provider (`auth`)
+# running at AUTH_URL — this service stopped being it, so a dashboard login
+# locally needs it up. Register this gateway as a client there and set
+# OIDC_CLIENT_ID/SECRET.
 
 services:
   postgres:
@@ -42,19 +44,20 @@ services:
       # Browser/Claude-facing issuer. Defaults to localhost; set HYDRA_ISSUER in
       # .env to a public tunnel hostname to test the Claude connector.
       URLS_SELF_ISSUER: ${HYDRA_ISSUER:-http://localhost:4444}
-      # Login/consent providers live in *this* service (browser-facing URLs).
-      URLS_LOGIN: ${PUBLIC_URL:-http://localhost:8080}/auth/login
-      URLS_CONSENT: ${PUBLIC_URL:-http://localhost:8080}/auth/consent
+      # Login and consent are delegated to the provider, not to this service.
+      # Hydra takes one for the whole authorization server, which is why it
+      # cannot live inside a service that is merely one of its clients.
+      URLS_LOGIN: ${AUTH_URL:-http://localhost:8082}/auth/login
+      URLS_CONSENT: ${AUTH_URL:-http://localhost:8082}/auth/consent
       SECRETS_SYSTEM: dev-system-secret-change-me-at-least-32-chars
       # Opaque access tokens (default) — the service introspects them, so no
       # JWT ever reaches a client. Revocable at Hydra.
       OAUTH2_EXPOSE_INTERNAL_ERRORS: "true"
       # Self-hosted Hydra OSS doesn't serve public DCR (that's an Ory Network
       # feature), and Claude rejects Hydra's DCR response anyway (empty
-      # client_uri/logo_uri/tos_uri). So we advertise OUR /register as the
-      # registration_endpoint; it proxies to Hydra's admin API and returns a
-      # Claude-valid response.
-      WEBFINGER_OIDC_DISCOVERY_CLIENT_REGISTRATION_URL: ${PUBLIC_URL:-http://localhost:8080}/register
+      # client_uri/logo_uri/tos_uri). The provider proxies it and returns a
+      # Claude-valid response — this service used to, and no longer does.
+      WEBFINGER_OIDC_DISCOVERY_CLIENT_REGISTRATION_URL: ${AUTH_URL:-http://localhost:8082}/register
       # TLS is terminated by the proxy (cloudflared/Traefik), so Hydra sees http
       # and won't mark cookies Secure. --dev sets SameSite=None, and browsers
       # drop None-without-Secure → "no CSRF value" 403. AS + gateway are the same
@@ -79,8 +82,9 @@ services:
       # to test the Claude connector (see "Cloudflare tunnel" in the README).
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
       DATABASE_URL: postgres://mcpgw:mcpgw@postgres:5432/mcp_gateway
-      # Issuer is what the browser/Claude use to reach Hydra (advertised in
-      # metadata); admin is in-network, used for introspection + login/consent.
+      # Issuer is what the browser and Claude use to reach Hydra (advertised in
+      # metadata, and where a dashboard login is sent); admin is in-network and
+      # now only introspects.
       HYDRA_ISSUER: ${HYDRA_ISSUER:-http://localhost:4444}
       HYDRA_ADMIN_URL: http://hydra:4445
       # The registry: which MCPs this gateway fronts, what each one is called,

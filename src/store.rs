@@ -23,7 +23,8 @@ pub struct Session {
 /// Transient OAuth flow state carried across the GitHub redirect.
 pub struct OAuthFlow {
     pub csrf: String,
-    pub login_challenge: Option<String>,
+    /// The PKCE verifier, held back while the browser is at the issuer.
+    pub verifier: String,
 }
 
 fn new_id() -> String {
@@ -224,17 +225,17 @@ impl Store {
     pub async fn create_oauth_flow(
         &self,
         csrf: &str,
-        login_challenge: Option<&str>,
+        verifier: &str,
         ttl_secs: i64,
     ) -> Result<String> {
         let id = new_id();
         let expires_at = OffsetDateTime::now_utc() + time::Duration::seconds(ttl_secs);
         sqlx::query(
-            "INSERT INTO oauth_flows (id, csrf, login_challenge, expires_at) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO oauth_flows (id, csrf, verifier, expires_at) VALUES ($1, $2, $3, $4)",
         )
         .bind(&id)
         .bind(csrf)
-        .bind(login_challenge)
+        .bind(verifier)
         .bind(expires_at)
         .execute(&self.pool)
         .await?;
@@ -245,14 +246,14 @@ impl Store {
     pub async fn take_oauth_flow(&self, id: &str) -> Result<Option<OAuthFlow>> {
         let row = sqlx::query(
             "DELETE FROM oauth_flows WHERE id = $1 AND expires_at > now()
-             RETURNING csrf, login_challenge",
+             RETURNING csrf, verifier",
         )
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(|row| OAuthFlow {
             csrf: row.get("csrf"),
-            login_challenge: row.get("login_challenge"),
+            verifier: row.get("verifier"),
         }))
     }
 }

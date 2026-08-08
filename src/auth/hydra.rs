@@ -1,12 +1,19 @@
-//! Thin client for Hydra's admin API — the login/consent handshake.
+//! Thin client for Hydra's admin API.
 //!
-//! Hydra is headless: it drives the OAuth protocol but delegates "log the user
-//! in" and "does the user consent" back to us. We accept both via these admin
-//! calls after GitHub has vouched for the user. The admin API is
-//! cluster-internal and must never be exposed publicly.
+//! One call is left: introspecting the bearer token an MCP client presents.
+//! Access tokens are opaque by design, so the only way to learn whether one is
+//! live and whose it is, is to ask the authorization server.
+//!
+//! This used to also accept login and consent challenges, back when this
+//! gateway was the login provider for every client of that Hydra. That moved to
+//! its own service, and with it the reason for this file to know anything about
+//! how a person signs in.
+//!
+//! The admin API is cluster-internal and must never be exposed publicly: it
+//! answers for any token without authenticating the caller.
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 #[derive(Clone)]
 pub struct HydraAdmin {
@@ -15,37 +22,9 @@ pub struct HydraAdmin {
 }
 
 #[derive(Deserialize)]
-pub struct ConsentRequest {
-    #[serde(default)]
-    pub requested_scope: Vec<String>,
-    #[serde(default)]
-    pub requested_access_token_audience: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct RedirectTo {
-    redirect_to: String,
-}
-
-#[derive(Deserialize)]
 struct Introspection {
     active: bool,
     sub: Option<String>,
-}
-
-#[derive(Serialize)]
-struct AcceptLogin<'a> {
-    subject: &'a str,
-    remember: bool,
-    remember_for: u64,
-}
-
-#[derive(Serialize)]
-struct AcceptConsent {
-    grant_scope: Vec<String>,
-    grant_access_token_audience: Vec<String>,
-    remember: bool,
-    remember_for: u64,
 }
 
 impl HydraAdmin {
@@ -56,107 +35,26 @@ impl HydraAdmin {
         }
     }
 
-    /// Accept a login challenge for `subject`, returning where to send the browser.
-    pub async fn accept_login(&self, login_challenge: &str, subject: &str) -> Result<String> {
-        let url = format!("{}/admin/oauth2/auth/requests/login/accept", self.base);
-        let resp: RedirectTo = self
-            .http
-            .put(&url)
-            .query(&[("login_challenge", login_challenge)])
-            .json(&AcceptLogin {
-                subject,
-                remember: true,
-                remember_for: 3600,
-            })
-            .send()
-            .await
-            .context("hydra accept_login")?
-            .error_for_status()
-            .context("hydra accept_login status")?
-            .json()
-            .await?;
-        Ok(resp.redirect_to)
-    }
-
-    /// Introspect an opaque access token. Returns the subject if the token is
-    /// active. This is how we resolve Claude's bearer token to a user without
-    /// JWTs — the token stays an opaque reference and can be revoked at Hydra.
+    /// The subject a token belongs to, or `None` if it is not live.
+    ///
+    /// `None` and an error are deliberately different: a token the server says
+    /// is inactive is a rejection, and a server that cannot be reached is not —
+    /// treating the second as the first would fail every request open or closed
+    /// on an outage rather than reporting one.
     pub async fn introspect(&self, token: &str) -> Result<Option<String>> {
-        let url = format!("{}/admin/oauth2/introspect", self.base);
-        let resp: Introspection = self
+        let introspection: Introspection = self
             .http
-            .post(&url)
+            .post(format!("{}/admin/oauth2/introspect", self.base))
             .form(&[("token", token)])
             .send()
             .await
-            .context("hydra introspect")?
+            .context("calling Hydra's introspection endpoint")?
             .error_for_status()
-            .context("hydra introspect status")?
+            .context("Hydra refused the introspection")?
             .json()
-            .await?;
-        Ok(if resp.active { resp.sub } else { None })
-    }
-
-    /// Create an OAuth2 client via Hydra's admin API. Used by our DCR proxy
-    /// (`/register`): Hydra OSS doesn't serve public DCR, and Claude rejects
-    /// Hydra's DCR response shape anyway, so we create the client here and
-    /// return a clean response ourselves.
-    pub async fn create_client(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
-        let url = format!("{}/admin/clients", self.base);
-        let resp = self
-            .http
-            .post(&url)
-            .json(body)
-            .send()
             .await
-            .context("hydra create_client")?
-            .error_for_status()
-            .context("hydra create_client status")?
-            .json()
-            .await?;
-        Ok(resp)
-    }
+            .context("Hydra's introspection response was not JSON")?;
 
-    pub async fn get_consent(&self, consent_challenge: &str) -> Result<ConsentRequest> {
-        let url = format!("{}/admin/oauth2/auth/requests/consent", self.base);
-        let resp = self
-            .http
-            .get(&url)
-            .query(&[("consent_challenge", consent_challenge)])
-            .send()
-            .await
-            .context("hydra get_consent")?
-            .error_for_status()
-            .context("hydra get_consent status")?
-            .json()
-            .await?;
-        Ok(resp)
-    }
-
-    /// Auto-grant the requested scopes/audience (single-tenant: no consent UI).
-    pub async fn accept_consent(
-        &self,
-        consent_challenge: &str,
-        req: &ConsentRequest,
-    ) -> Result<String> {
-        let url = format!("{}/admin/oauth2/auth/requests/consent/accept", self.base);
-        let resp: RedirectTo = self
-            .http
-            .put(&url)
-            .query(&[("consent_challenge", consent_challenge)])
-            .json(&AcceptConsent {
-                grant_scope: req.requested_scope.clone(),
-                grant_access_token_audience: req.requested_access_token_audience.clone(),
-                remember: true,
-                remember_for: 3600,
-            })
-            .send()
-            .await
-            .context("hydra accept_consent")?
-            .error_for_status()
-            .context("hydra accept_consent status")?
-            .json()
-            .await?;
-        Ok(resp.redirect_to)
+        Ok(introspection.active.then_some(introspection.sub).flatten())
     }
 }

@@ -148,9 +148,12 @@ Each backend MCP is one entry — adding an MCP is config, not code:
 - id: fastmail
   name: Fastmail
   backend: http://fastmail-mcp:8080/mcp
-  credential_header: X-Fastmail-Token
   key_help_url: https://app.fastmail.com/settings/security/tokens
-  key_hint: fmu1-…
+  fields:
+    - id: token
+      label: API token
+      header: X-Fastmail-Token
+      hint: fmu1-…
 ```
 
 The gateway ships no registry of its own. It arrives whole in the environment
@@ -164,8 +167,8 @@ JSON is accepted too, since every JSON document is valid YAML.
 `docker-compose.yml` is the worked example: the registry sits in the `gateway`
 service's environment, beside the backend services it names.
 
-`/fastmail` proxies to `backend`, injecting the user's stored key as
-`credential_header`. (Ids that would shadow a gateway route — `register`,
+`/fastmail` proxies to `backend`, injecting each stored value into the header
+its field names. (Ids that would shadow a gateway route — `register`,
 `auth`, `login`, `logout`, `dashboard`, `healthz`, `.well-known` — are rejected
 at startup.)
 
@@ -196,11 +199,16 @@ for a backend that authenticates nothing.
 
 #### MCPs that need more than one value
 
-`credential_header` is shorthand for the common single-token case. Not every
-backend fits it: [`caldav-cli`](https://github.com/radiosilence/caldav-cli)
-authenticates with a username *and* an app password, against a server URL that
-differs per provider. Such an MCP declares `fields` instead, and each field is
-injected into its own header:
+`credential_header: X-Some-Token` stays available as shorthand for a backend
+with exactly one secret, and is normalised into a one-entry `fields` at load, so
+nothing downstream knows which form was used.
+
+Plenty of backends don't fit it.
+[`caldav-cli`](https://github.com/radiosilence/caldav-cli) authenticates with a
+username *and* an app password, against a server URL that differs per provider.
+Fastmail needs three: an API token for mail, plus a username and app password
+for contacts, because CardDAV is a separate protocol that rejects API tokens.
+Such an MCP declares `fields`, and each field is injected into its own header:
 
 ```yaml
 - id: caldav

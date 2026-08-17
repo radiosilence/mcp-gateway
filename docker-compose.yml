@@ -93,12 +93,33 @@ services:
       # Here that deployment is this file, which is why the registry sits
       # beside the backend services it names.
       MCP_REGISTRY: |
+        # Mail runs on an API token, but contacts go over CardDAV, which is a
+        # separate protocol that rejects API tokens outright — so this needs
+        # three values rather than one, and the two CardDAV ones are optional:
+        # without them mail works and `contacts` doesn't, which the backend
+        # reports as `session { carddavConfigured }` rather than failing a
+        # query halfway through.
         - id: fastmail
           name: Fastmail
           backend: http://fastmail-mcp:8080/mcp
-          credential_header: X-Fastmail-Token
           key_help_url: https://app.fastmail.com/settings/security/tokens
-          key_hint: fmu1-…
+          fields:
+            - id: token
+              label: API token
+              header: X-Fastmail-Token
+              hint: fmu1-…
+            - id: username
+              label: Username (contacts only)
+              header: X-Fastmail-Username
+              secret: false
+              required: false
+              hint: you@fastmail.com
+            # An app password, not the API token above: CardDAV won't take one.
+            - id: app_password
+              label: App password (contacts only)
+              header: X-Fastmail-App-Password
+              required: false
+              hint: Blank = mail works, contact search doesn't
 
         # CalDAV wants a username, a password and a server, not one bearer
         # token — hence `fields` rather than the `credential_header` shorthand.

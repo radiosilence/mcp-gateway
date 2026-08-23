@@ -3,7 +3,7 @@
      on one and not the other changed the box model and the swap visibly moved
      the page. Nothing here paints — the surface belongs to each state below,
      which is what lets a skeleton look different without risking that again. -#}
-{% macro field_box() %}mt-1 w-full rounded-lg border-0 px-3 py-2 text-sm ring-1 ring-inset outline-none{% endmacro %}
+{% macro field_box() %}mt-1.5 w-full rounded-lg border-0 px-3 py-2 text-sm ring-1 ring-inset outline-none{% endmacro %}
 
 {#- A field you can type in or choose from. -#}
 {% macro field_control() %}{% call field_box() %}{% endcall %} bg-slate-100 dark:bg-slate-800 ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500{% endmacro %}

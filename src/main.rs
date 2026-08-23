@@ -173,6 +173,7 @@ async fn main() -> Result<()> {
         .route("/logout", get(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
         .route("/dashboard/{mcp_id}/token", post(dashboard::set_credential))
+        .route("/dashboard/{mcp_id}/status", get(dashboard::mcp_status))
         .route(
             "/dashboard/{mcp_id}/options/{field_id}",
             get(dashboard::field_options),

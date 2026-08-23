@@ -1,6 +1,6 @@
 [package]
 name = "mcp-gateway"
-version = "0.8.2"
+version = "0.8.3"
 edition = "2024"
 description = "OAuth-fronted gateway for self-hosted MCP servers: one AS + credential vault + dashboard, routing to per-MCP backends with the right secret injected"
 repository = "https://github.com/radiosilence/mcp-gateway"

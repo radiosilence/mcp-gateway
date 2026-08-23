@@ -1,14 +1,18 @@
 //! What the page is made of: the shape each template renders from, and the one
 //! constructor behind both the whole page and a single re-rendered section.
+//!
+//! Nothing here talks to a backend. `build` reads this gateway's own database
+//! and returns, so what a page costs is what our Postgres costs; everything
+//! that has to ask somebody else — a setting's choices, whether a credential
+//! still works — is an endpoint htmx calls once the page is already up.
 
 use std::collections::HashMap;
 
 use askama::Template;
 use axum::response::{Html, IntoResponse, Response};
-use serde_json::Value;
 
 use crate::config::Mcp;
-use crate::dashboard::options::{Verified, options_template, verify};
+use crate::dashboard::options::Verified;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::Session;
@@ -28,6 +32,15 @@ pub(super) struct OptionView {
 #[derive(Template)]
 #[template(path = "mcp_section.html")]
 pub(super) struct McpSectionTemplate {
+    pub(super) m: McpView,
+}
+
+/// The connection badge on its own, which is what the status endpoint answers
+/// with. Same template the section includes, so the pill htmx swaps in cannot
+/// look like a different thing from the one it replaced.
+#[derive(Template)]
+#[template(path = "mcp_badge.html")]
+pub(super) struct McpBadgeTemplate {
     pub(super) m: McpView,
 }
 
@@ -76,9 +89,6 @@ pub(super) struct FieldView {
     pub(super) from_backend: bool,
     /// Endpoint serving those choices. Empty until credentials exist.
     pub(super) options_url: String,
-    /// The rendered control, when its choices arrived in time to put them in
-    /// the page. Empty means the page ships a placeholder and htmx fills it.
-    pub(super) options_html: String,
 }
 
 /// What a mutation wants to say about itself. Carried on the section because
@@ -112,9 +122,15 @@ impl Notice {
 
 pub(super) struct McpView {
     /// Green claims a backend confirmed the credentials, so it is only ever set
-    /// when one actually did.
+    /// when one actually did — or when there is no check declared, which is the
+    /// one case the answer is known without asking.
     pub(super) verified: bool,
     pub(super) rejected: bool,
+    /// Endpoint that will say which of those two it is. Non-empty exactly when
+    /// a backend has to be asked, which is what the badge keys off: the page
+    /// renders a pending pill and htmx replaces it, and every other MCP gets
+    /// its final badge in the first response.
+    pub(super) status_url: String,
     pub(super) notice: Notice,
     pub(super) id: String,
     pub(super) name: String,
@@ -156,12 +172,7 @@ impl McpView {
     /// One MCP as the page shows it. Shared because a mutation re-renders a
     /// single section, and a second construction path would be a second place
     /// for the badge, the timestamp and the settings to disagree.
-    pub(super) async fn build(
-        state: &AppState,
-        session: &Session,
-        m: &Mcp,
-        prefetched: &HashMap<(String, String), (Value, String)>,
-    ) -> AppResult<Self> {
+    pub(super) async fn build(state: &AppState, session: &Session, m: &Mcp) -> AppResult<Self> {
         let base = state.config.public_url.trim_end_matches('/');
         let meta = state
             .store
@@ -194,12 +205,6 @@ impl McpView {
             .fields
             .iter()
             .map(|f| FieldView {
-                options_html: prefetched
-                    .get(&(m.id.clone(), f.id.clone()))
-                    .map(|(options, current)| {
-                        render_to_string(options_template(options, current, &m.id, &f.id))
-                    })
-                    .unwrap_or_default(),
                 value: match f.secret {
                     true => String::new(),
                     false => stored
@@ -229,11 +234,11 @@ impl McpView {
             })
             .collect();
 
-        // Only worth asking when there is something to ask about.
-        let checked = match has_credential && !m.is_public() {
-            true => verify(state, &session.sub, m).await,
-            false => Verified::Unknown,
-        };
+        // Somebody has to be asked exactly when there is a check declared and a
+        // credential to run it against. Everything else the badge needs is
+        // already here, so only these MCPs pay for a round trip — and they pay
+        // for it after the page is on screen rather than in front of it.
+        let needs_check = has_credential && !m.is_public() && m.verify.is_some();
 
         let connector_url = format!("{base}/{}", m.id);
         Ok(McpView {
@@ -247,8 +252,12 @@ impl McpView {
             has_credential,
             // A backend with no check declared is taken at its word. Withholding
             // green would imply a doubt we have no grounds for — we never asked.
-            verified: checked == Verified::Yes || m.verify.is_none(),
-            rejected: checked == Verified::Rejected,
+            verified: m.verify.is_none(),
+            rejected: false,
+            status_url: match needs_check {
+                true => format!("/dashboard/{}/status", m.id),
+                false => String::new(),
+            },
             public: m.is_public(),
             updated_at,
             updated_ago,
@@ -257,6 +266,19 @@ impl McpView {
             fields,
             notice: Notice::none(),
         })
+    }
+
+    /// Settle the badge with what a backend actually said.
+    ///
+    /// Clearing `status_url` is what stops the swapped-in pill asking again:
+    /// the fragment renders from the same template as the placeholder, so a
+    /// still-set URL would give it another `hx-trigger="load"` and it would
+    /// fetch itself forever.
+    pub(super) fn checked(mut self, verdict: Verified) -> Self {
+        self.verified = verdict == Verified::Yes;
+        self.rejected = verdict == Verified::Rejected;
+        self.status_url = String::new();
+        self
     }
 }
 
@@ -270,13 +292,6 @@ pub(super) fn mcp_or_404<'a>(state: &'a AppState, id: &str) -> AppResult<&'a Mcp
         .ok_or_else(|| AppError::BadRequest("unknown mcp".into()))
 }
 
-pub(super) fn render_to_string<T: Template>(template: T) -> String {
-    template.render().unwrap_or_else(|e| {
-        tracing::error!(error = %e, "fragment render failed");
-        String::new()
-    })
-}
-
 pub(super) fn render<T: Template>(template: T) -> Response {
     match template.render() {
         Ok(html) => Html(html).into_response(),
@@ -284,5 +299,67 @@ pub(super) fn render<T: Template>(template: T) -> Response {
             tracing::error!(error = %e, "fragment render failed");
             Html("<span data-status>Could not render</span>").into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Connected, with a check declared and nobody asked yet.
+    fn pending() -> McpView {
+        McpView {
+            verified: false,
+            rejected: false,
+            status_url: "/dashboard/caldav/status".into(),
+            notice: Notice::none(),
+            id: "caldav".into(),
+            name: "CalDAV".into(),
+            has_credential: true,
+            public: false,
+            has_settings: false,
+            updated_at: String::new(),
+            updated_ago: String::new(),
+            connector_url: String::new(),
+            claude_code_cmd: String::new(),
+            key_help_url: String::new(),
+            fields: Vec::new(),
+        }
+    }
+
+    fn badge(m: McpView) -> String {
+        McpBadgeTemplate { m }.render().unwrap()
+    }
+
+    /// The one way this shape can go wrong: the answer renders from the same
+    /// template as the question, so an answer that kept its URL would carry
+    /// another `hx-trigger="load"` and fetch itself for as long as the tab is
+    /// open — a backend hammered by every idle dashboard.
+    #[test]
+    fn a_settled_badge_does_not_ask_again() {
+        assert!(badge(pending()).contains("hx-get=\"/dashboard/caldav/status\""));
+        for verdict in [Verified::Yes, Verified::Rejected, Verified::Unknown] {
+            assert!(
+                !badge(pending().checked(verdict)).contains("hx-get"),
+                "{verdict:?} left the badge fetching itself"
+            );
+        }
+    }
+
+    #[test]
+    fn a_verdict_reads_as_the_badge_it_should() {
+        assert!(badge(pending().checked(Verified::Yes)).contains("Connected"));
+        assert!(badge(pending().checked(Verified::Rejected)).contains("Credentials rejected"));
+        // Asked, and the backend could not say. Not green: that would be a
+        // claim we have no grounds for.
+        assert!(badge(pending().checked(Verified::Unknown)).contains("Configured"));
+    }
+
+    /// The pending pill is only ever shown for a credential we hold, so it must
+    /// win over the badge for one we don't — otherwise a check that is still in
+    /// flight reads as "Not configured".
+    #[test]
+    fn pending_is_not_mistaken_for_unconfigured() {
+        assert!(!badge(pending()).contains("Not configured"));
     }
 }

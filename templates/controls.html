@@ -10,5 +10,9 @@
 {#- The badge. Colours arrive as whole class names rather than being built from
      a tone, because Tailwind scans for literals — `bg-{tone}-50` generates
      nothing and the badge renders unstyled. Structure is shared; the palette
-     stays visible at the call site. -#}
-{% macro badge(colours, dot, label) %}<span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 {{ colours }}"><span class="h-1.5 w-1.5 rounded-full {{ dot }}"></span> {{ label }}</span>{% endmacro %}
+     stays visible at the call site.
+
+     A non-empty `load_url` makes it fetch its own replacement. Here rather than
+     as a second macro because the pill that asks and the pill that answers have
+     to be the same size, or the swap moves the page. -#}
+{% macro badge(colours, dot, label, load_url) %}<span{% if !load_url.is_empty() %} hx-get="{{ load_url }}" hx-trigger="load" hx-swap="outerHTML" aria-busy="true"{% endif %} class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 {{ colours }}"><span class="h-1.5 w-1.5 rounded-full {{ dot }}"></span> {{ label }}</span>{% endmacro %}

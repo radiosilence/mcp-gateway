@@ -1,6 +1,6 @@
 {
   "name": "@radiosilence/mcp-gateway-pulumi",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Pulumi component that deploys mcp-gateway, Hydra and Postgres into Kubernetes",
   "license": "ISC",
   "author": "James Cleveland <jc@blit.cc>",

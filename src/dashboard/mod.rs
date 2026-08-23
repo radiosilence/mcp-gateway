@@ -294,6 +294,7 @@ pub async fn set_field(
     // value is authoritative either way, so the save still stands.
     let refused = sync_upstream(&state, mcp, &values, Some(&stored)).await;
     Ok(status_fragment(
+        format!("field-status-{mcp_id}-{field_id}"),
         refused.clone().unwrap_or_else(|| "Saved".into()),
         refused.is_some(),
     ))
@@ -341,6 +342,8 @@ pub async fn field_options(
             // status line rather than options leaves the placeholder in place.
             tracing::debug!(error = %e, mcp = %mcp_id, field = %field_id, "options lookup failed");
             Ok(render(FieldOptionsErrorTemplate {
+                mcp_id: mcp_id.clone(),
+                field_id: field_id.clone(),
                 error: e.to_string(),
             }))
         }
@@ -372,8 +375,8 @@ pub async fn mcp_status(
     Ok(render(McpBadgeTemplate { m: view }))
 }
 
-fn status_fragment(message: String, bad: bool) -> Response {
-    render(FieldStatusTemplate { message, bad })
+fn status_fragment(id: String, message: String, bad: bool) -> Response {
+    render(FieldStatusTemplate { id, message, bad })
 }
 
 /// A rendering failure here is a bug in a template, not something the user can

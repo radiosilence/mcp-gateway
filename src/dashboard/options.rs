@@ -303,7 +303,10 @@ mod tests {
         let html = t.render().unwrap();
         assert!(html.contains("— account default"));
         assert!(html.contains(r#"value="home" selected"#));
-        assert!(html.contains(r#"hx-patch="/dashboard/caldav/field/calendar""#));
+        assert!(html.contains("@patch('/dashboard/caldav/field/calendar'"));
+        // The slot it morphs into, which is also the skeleton's and the error
+        // message's — three renderings of one place on the page.
+        assert!(html.contains(r#"id="options-caldav-calendar""#));
     }
 
     /// A stored value that no longer exists upstream must not silently select

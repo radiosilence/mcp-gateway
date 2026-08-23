@@ -2,13 +2,18 @@
 {#- Replaces the skeleton outright, so it carries the control itself and not
      just its contents. Which entries are offered, which is the account's own
      and which is stored are decisions, and they are made here where they can
-     be tested rather than in the browser. -#}
-<select name="value"
-        hx-patch="/dashboard/{{ mcp_id }}/field/{{ field_id }}" hx-trigger="change"
-        hx-target="next [data-status]" hx-swap="outerHTML"
-        class="{% call ui::field_control() %}{% endcall %}">
-  <option value="">{% if let Some(d) = account_default %}Account default ({{ d }}){% else %}Account default{% endif %}</option>
+     be tested rather than in the browser.
+
+     Wrapped in a form so the change can be sent as `contentType: 'form'` and
+     the handler keeps reading one named field. The alternative — binding it to
+     a signal — sends every signal on the page with each request, and this page
+     has one setting per connected MCP. -#}
+<form id="options-{{ mcp_id }}-{{ field_id }}"
+      data-on:change="@patch('/dashboard/{{ mcp_id }}/field/{{ field_id }}', {contentType: 'form'})">
+  <select name="value" class="{% call ui::field_control() %}{% endcall %}">
+    <option value="">{% if let Some(d) = account_default %}Account default ({{ d }}){% else %}Account default{% endif %}</option>
 {%- for o in options %}
-  <option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}{% if o.is_default %} — account default{% endif %}</option>
+    <option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}{% if o.is_default %} — account default{% endif %}</option>
 {%- endfor %}
-</select>
+  </select>
+</form>

@@ -463,3 +463,127 @@ mod tests {
         );
     }
 }
+
+/// The dashboard as a static file, so how it looks can be reviewed without a
+/// login.
+///
+/// Standing the real thing up needs Hydra and the login provider, which is more
+/// than a spacing change is worth — and the alternative is guessing, which is
+/// how the loading field ended up indistinguishable from an empty one. Fixtures
+/// rather than a database: every state the section has, on one page, including
+/// the ones a given account may never be in.
+///
+/// `mise run preview`. Ignored by default because it writes a file and answers
+/// a question CI is not asking.
+#[cfg(test)]
+mod preview {
+    use super::*;
+
+    fn mcp(name: &str, id: &str) -> McpView {
+        McpView {
+            verified: false,
+            rejected: false,
+            status_url: String::new(),
+            notice: Notice::none(),
+            id: id.into(),
+            name: name.into(),
+            has_credential: true,
+            public: false,
+            has_settings: false,
+            updated_at: "2026-08-20T10:00:00Z".into(),
+            updated_ago: "3 days ago".into(),
+            connector_url: format!("https://mcp.blit.cc/{id}"),
+            claude_code_cmd: format!(
+                "claude mcp add --transport http --scope user {id} https://mcp.blit.cc/{id}"
+            ),
+            key_help_url: String::new(),
+            fields: Vec::new(),
+        }
+    }
+
+    fn setting(label: &str, id: &str) -> FieldView {
+        FieldView {
+            id: id.into(),
+            label: label.into(),
+            input_type: "text".into(),
+            secret: false,
+            is_set: false,
+            placeholder: String::new(),
+            value: String::new(),
+            required: false,
+            from_backend: true,
+            options_url: format!("/dashboard/caldav/options/{id}"),
+        }
+    }
+
+    fn secret(label: &str, id: &str) -> FieldView {
+        FieldView {
+            id: id.into(),
+            label: label.into(),
+            input_type: "password".into(),
+            secret: true,
+            is_set: true,
+            placeholder: "fmu1-…".into(),
+            value: String::new(),
+            required: true,
+            from_backend: false,
+            options_url: String::new(),
+        }
+    }
+
+    #[test]
+    #[ignore = "writes a file; run it through `mise run preview`"]
+    fn write_preview() {
+        let mcps = vec![
+            McpView {
+                status_url: "/dashboard/fastmail/status".into(),
+                fields: vec![secret("API token", "token")],
+                ..mcp("Fastmail", "fastmail")
+            },
+            McpView {
+                status_url: "/dashboard/caldav/status".into(),
+                has_settings: true,
+                fields: vec![
+                    setting("Default calendar for new events", "calendar"),
+                    secret("App password", "password"),
+                ],
+                ..mcp("CalDAV", "caldav")
+            },
+            McpView {
+                public: true,
+                verified: true,
+                updated_at: String::new(),
+                updated_ago: String::new(),
+                ..mcp("Folk", "folk")
+            },
+            McpView {
+                has_credential: false,
+                key_help_url: "https://api-portal.tfl.gov.uk".into(),
+                fields: vec![secret("App key", "key")],
+                ..mcp("TfL", "tfl")
+            },
+        ];
+        let html = DashboardTemplate {
+            login: "radiosilence".into(),
+            mcps,
+        }
+        .render()
+        .unwrap();
+        let css = include_str!("../../assets/app.css");
+        let html = html
+            .replace(
+                r#"<link rel="stylesheet" href="/assets/app.css" />"#,
+                &format!("<style>{css}</style>"),
+            )
+            .replace(
+                r#"<script type="module" src="/assets/app.js"></script>"#,
+                "",
+            );
+        // htmx is dropped along with the stylesheet link, so the page keeps
+        // the states it was rendered in: the skeleton stays a skeleton and the
+        // badge stays pending, which is the half that is otherwise hardest to
+        // catch in the act.
+        let out = std::env::var("PREVIEW_OUT").expect("PREVIEW_OUT");
+        std::fs::write(&out, html).unwrap_or_else(|e| panic!("writing {out}: {e}"));
+    }
+}

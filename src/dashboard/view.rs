@@ -331,6 +331,40 @@ mod tests {
         McpBadgeTemplate { m }.render().unwrap()
     }
 
+    /// One backend-sourced setting, which is what puts a skeleton on the page.
+    fn with_a_setting() -> McpView {
+        McpView {
+            has_settings: true,
+            fields: vec![FieldView {
+                id: "calendar".into(),
+                label: "Calendar".into(),
+                input_type: "text".into(),
+                secret: false,
+                is_set: false,
+                placeholder: String::new(),
+                value: String::new(),
+                required: false,
+                from_backend: true,
+                options_url: "/dashboard/caldav/options/calendar".into(),
+            }],
+            ..pending()
+        }
+    }
+
+    /// The classes on the first `<select>`, which is the skeleton in a section
+    /// and the real control in an options fragment.
+    fn select_classes(html: &str) -> std::collections::BTreeSet<String> {
+        let tag = html[html.find("<select").expect("a select")..]
+            .split('>')
+            .next()
+            .expect("a closing bracket");
+        let attr = &tag[tag.find("class=\"").expect("a class attribute") + 7..];
+        attr[..attr.find('"').expect("a closing quote")]
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    }
+
     /// The one way this shape can go wrong: the answer renders from the same
     /// template as the question, so an answer that kept its URL would carry
     /// another `hx-trigger="load"` and fetch itself for as long as the tab is
@@ -361,6 +395,54 @@ mod tests {
     #[test]
     fn pending_is_not_mistaken_for_unconfigured() {
         assert!(!badge(pending()).contains("Not configured"));
+    }
+
+    /// The skeleton and the control that replaces it may differ in how they
+    /// look and in nothing else. A class that changes the box on one and not
+    /// the other moves the page when htmx swaps them, which is a bug this
+    /// pairing has already had once — so the assertion is on the whole
+    /// difference between them, not on a list of classes to keep in step.
+    #[test]
+    fn a_loading_field_differs_from_a_loaded_one_only_in_surface() {
+        let skeleton = select_classes(
+            &McpSectionTemplate {
+                m: with_a_setting(),
+            }
+            .render()
+            .unwrap(),
+        );
+        let loaded = select_classes(
+            &FieldOptionsTemplate {
+                mcp_id: "caldav".into(),
+                field_id: "calendar".into(),
+                account_default: None,
+                options: Vec::new(),
+            }
+            .render()
+            .unwrap(),
+        );
+
+        let only_skeleton: Vec<_> = skeleton.difference(&loaded).cloned().collect();
+        let only_loaded: Vec<_> = loaded.difference(&skeleton).cloned().collect();
+        assert_eq!(
+            only_skeleton,
+            [
+                "animate-pulse",
+                "bg-slate-200",
+                "dark:bg-slate-700",
+                "pointer-events-none",
+                "text-transparent",
+            ]
+        );
+        assert_eq!(
+            only_loaded,
+            [
+                "bg-slate-100",
+                "dark:bg-slate-800",
+                "focus:ring-2",
+                "focus:ring-indigo-500",
+            ]
+        );
     }
 
     /// Both full pages, because the whole use of a version in the corner is

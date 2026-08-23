@@ -1,7 +1,21 @@
-{#- Shared so the placeholder and the control that replaces it cannot drift.
-     They already did once: a class on one and not the other changed the box
-     model, and the swap visibly moved the page. -#}
-{% macro field_control() %}mt-1 w-full rounded-lg border-0 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none{% endmacro %}
+{#- Every field's box, and only its box. Shared so the placeholder and the
+     control that replaces it cannot drift: they already did once, when a class
+     on one and not the other changed the box model and the swap visibly moved
+     the page. Nothing here paints — the surface belongs to each state below,
+     which is what lets a skeleton look different without risking that again. -#}
+{% macro field_box() %}mt-1 w-full rounded-lg border-0 px-3 py-2 text-sm ring-1 ring-inset outline-none{% endmacro %}
+
+{#- A field you can type in or choose from. -#}
+{% macro field_control() %}{% call field_box() %}{% endcall %} bg-slate-100 dark:bg-slate-800 ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500{% endmacro %}
+
+{#- The same field while its choices are still on their way from a backend.
+     Filled rather than empty: an empty control that pulses reads as a setting
+     with nothing chosen, which is a worse thing to say than "not here yet".
+
+     The surface is stated per state rather than layered over the control's,
+     because two `bg-*` utilities on one element is a coin toss — equal
+     specificity, so whichever Tailwind happens to emit last wins. -#}
+{% macro field_skeleton() %}{% call field_box() %}{% endcall %} pointer-events-none animate-pulse text-transparent bg-slate-200 dark:bg-slate-700 ring-slate-200 dark:ring-slate-700{% endmacro %}
 
 {#- The line under a setting. One definition: the page renders it empty and a
      save replaces it, and those drifting apart is how the last one broke. -#}

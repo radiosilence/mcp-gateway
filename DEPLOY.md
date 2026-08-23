@@ -1,11 +1,17 @@
 # Deploying
 
 **`docker-compose.yml` is the source of truth for the topology.** It describes
-every component, their images, env, ports, and dependencies. Production is that
-same topology translated to whatever runs it — this repo intentionally holds
-*no* cluster manifests (no k8s YAML, no Terraform) and no registry of its own.
-This is the implementation; hostnames, credentials and the list of MCPs belong
-to the deployment that instantiates it.
+every component, their images, env, ports, and dependencies.
+
+For Kubernetes, `deploy/pulumi` translates that same topology —
+`@radiosilence/mcp-gateway-pulumi`, published from this repo at the crate's own
+version. What it does *not* carry is the part that is not this project's:
+**hostnames, credentials and the list of MCPs belong to the deployment that
+instantiates it** and are passed in. There is still no registry of its own and
+no static YAML; a chart is the implementation of the topology, not an instance
+of it.
+
+See `deploy/pulumi/README.md`.
 
 ## Components (from `docker-compose.yml`)
 

@@ -1,0 +1,48 @@
+{
+  "name": "@radiosilence/mcp-gateway-pulumi",
+  "version": "0.8.0",
+  "description": "Pulumi component that deploys mcp-gateway, Hydra and Postgres into Kubernetes",
+  "license": "ISC",
+  "author": "James Cleveland <jc@blit.cc>",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/radiosilence/mcp-gateway.git",
+    "directory": "deploy/pulumi"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json && vitest run"
+  },
+  "peerDependencies": {
+    "@pulumi/kubernetes": "^4",
+    "@pulumi/pulumi": "^3",
+    "@pulumi/random": "^4",
+    "zod": "^4"
+  },
+  "dependencies": {
+    "yaml": "^2"
+  },
+  "devDependencies": {
+    "@pulumi/kubernetes": "4.30.0",
+    "@pulumi/pulumi": "3.239.0",
+    "@pulumi/random": "4.20.0",
+    "typescript": "6.0.3",
+    "vitest": "^4",
+    "zod": "4.4.3"
+  }
+}

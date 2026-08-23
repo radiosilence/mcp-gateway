@@ -50,7 +50,7 @@ two provider registries, and two mutually unassignable sets of Zod types.
 
 The package version is the crate version. They are one project and always ship
 together, so one number is honest where two would only invite them to disagree
-— pinning `@radiosilence/mcp-gateway-pulumi@0.8.0` says exactly which gateway
+— pinning `@radiosilence/mcp-gateway-pulumi@0.8.1` says exactly which gateway
 you get, and CI refuses a release where `Cargo.toml`, `package.json` and
 `src/versions.ts` disagree.
 

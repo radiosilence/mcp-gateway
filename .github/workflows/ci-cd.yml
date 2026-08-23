@@ -126,6 +126,27 @@ jobs:
       - run: npx vitest run
       - run: npm run build
 
+      # What gets published, not what got built. 0.8.0 shipped a tarball
+      # holding package.json and a README: the build ran in this job and
+      # `npm publish` ran in another, on another runner, with nothing to carry
+      # `dist/` between them. `prepublishOnly` is the fix; this is what notices
+      # if it ever stops working.
+      - name: Check the tarball carries the build
+        run: |
+          npm pack --dry-run --json > pack.json
+          node -e '
+            const files = require("./pack.json")[0].files.map((f) => f.path);
+            const missing = ["dist/index.js", "dist/index.d.ts"].filter(
+              (f) => !files.includes(f),
+            );
+            if (missing.length) {
+              console.error(`::error::tarball is missing ${missing.join(", ")}`);
+              console.error(files.join("\n"));
+              process.exit(1);
+            }
+            console.log(`${files.length} files, dist included`);
+          '
+
   check-version:
     name: Check Version
     runs-on: ubuntu-latest

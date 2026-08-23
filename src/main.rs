@@ -38,6 +38,14 @@ use crate::crypto::Cipher;
 use crate::state::AppState;
 use crate::store::Store;
 
+/// The build serving these pages, shown in the footer of each one.
+///
+/// `Cargo.toml`'s version is what a release is here, so this is the same string
+/// the image tag and the GitHub release carry — which is the point: neither of
+/// those is visible from a browser, and "which build am I looking at" is the
+/// first question a dashboard behaving oddly raises.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Baked into the binary rather than fetched from a CDN. These pages sit behind
 /// the login of a service that holds people's credentials, and they are typed
 /// into it in plaintext — a third-party script with DOM access there reads them

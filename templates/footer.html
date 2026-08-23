@@ -1,0 +1,9 @@
+{#- The build serving this page. Its own partial because both full pages carry
+     it, and a version that is right on one page and stale on the other is worse
+     than none at all.
+
+     The bottom padding clears a phone's gesture bar: this is the last element
+     on both pages, so without it the version sits under the home indicator. -#}
+<footer class="mt-6 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-center text-xs text-slate-400 dark:text-slate-600">
+  v{{ crate::VERSION }}
+</footer>

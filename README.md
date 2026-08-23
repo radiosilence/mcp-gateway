@@ -308,9 +308,12 @@ keep working with no migration**.
 ## Deploy
 
 `docker-compose.yml` is the **source of truth for the topology**; production is
-that same shape translated to whatever runs it. This repo holds no cluster
-manifests by design. See [`DEPLOY.md`](DEPLOY.md) for the prod deltas (domains,
-TLS, admin-not-exposed, secrets from the backend, opaque tokens).
+that same shape translated to whatever runs it. For Kubernetes that translation
+is [`deploy/pulumi`](deploy/pulumi/README.md), published as
+`@radiosilence/mcp-gateway-pulumi`. It carries no hostname, no credentials and
+no list of MCPs — those belong to the deployment that instantiates it. See
+[`DEPLOY.md`](DEPLOY.md) for the prod deltas (domains, TLS, admin-not-exposed,
+secrets from the backend, opaque tokens).
 
 ### Releases
 
@@ -320,9 +323,11 @@ commit on main. Pin whichever you want to follow — a deployment wanting to kno
 what changed should be on an exact version and read
 [`CHANGELOG.md`](CHANGELOG.md).
 
-Releasing is a version bump: change `version` in `Cargo.toml`, add the matching
-`CHANGELOG.md` entry, and merging cuts the tag, the GitHub release and the
-semver image tags. There is no tag to push by hand.
+Releasing is a version bump: change `version` in `Cargo.toml`,
+`deploy/pulumi/package.json` and `APP_VERSION` — CI refuses a release where the
+three disagree — add the matching `CHANGELOG.md` entry, and merging cuts the
+semver image tags, publishes the chart and creates the GitHub release, in that
+order. There is no tag to push by hand.
 
 ## Security model
 

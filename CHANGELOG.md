@@ -19,6 +19,21 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are stated separately because two `bg-*` utilities on one element is a coin
   toss — equal specificity, so whichever Tailwind emits last wins.
 
+- **Spacing across a service's card.** A caption was 4px under its heading and
+  a label 4px above its control, which is close enough to touching to read as
+  one thing; an open disclosure had 16px under its content and 10px above it,
+  so everything sat high in the box. What you can *do* to a connection — edit
+  the credentials, disconnect — is now set apart from what it *is*, and grouped
+  rather than evenly spaced with it.
+
+### Added
+
+- **`mise run preview`.** Renders the dashboard to a static file with fixtures
+  covering every state a section has, so how it looks can be checked without
+  standing up Hydra and the login provider. htmx is dropped along with the
+  stylesheet link, which is what keeps the skeleton a skeleton and the badge
+  pending — the states that are otherwise hardest to catch in the act.
+
 ## [0.8.4]
 
 ### Added

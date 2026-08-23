@@ -71,3 +71,12 @@ curl -s -o /dev/null -w "%{http_code}\\n" -X POST "https://$GATEWAY_HOST/caldav"
 echo "== openid-configuration (hydra) =="
 curl -fsS "https://$AUTH_HOST/.well-known/openid-configuration" | jq '{issuer,registration_endpoint,token_endpoint,jwks_uri}'
 """
+
+[tasks.preview]
+description = "Render the dashboard to a file and open it — how it looks, without a login"
+run = """
+out="${PREVIEW_OUT:-$(mktemp -d)/dashboard.html}"
+PREVIEW_OUT="$out" cargo test --quiet write_preview -- --ignored
+echo "$out"
+open "$out" 2>/dev/null || true
+"""

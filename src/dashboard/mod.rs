@@ -16,7 +16,7 @@ mod view;
 
 use view::*;
 
-use options::{fetch_choices, options_fragment, prefetch_options};
+use options::{fetch_choices, options_fragment, verify};
 
 use crate::auth::extract::{FragmentSession, PageSession};
 use crate::auth::routes::current_session;
@@ -34,10 +34,7 @@ async fn section(
     mcp: &Mcp,
     notice: Notice,
 ) -> AppResult<Response> {
-    // Only this MCP's settings, and only after the change — a new password
-    // means a different set of choices.
-    let prefetched = prefetch_options(state, &session.sub, Some(&mcp.id)).await;
-    let mut view = McpView::build(state, session, mcp, &prefetched).await?;
+    let mut view = McpView::build(state, session, mcp).await?;
     view.notice = notice;
     Ok(render(McpSectionTemplate { m: view }))
 }
@@ -52,15 +49,17 @@ pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Respons
     }
 }
 
+/// The page, built entirely from our own database. Every backend it names is
+/// asked about afterwards, by the browser, over htmx — so what this costs is a
+/// handful of local queries and it cannot be held open by somebody else's
+/// calendar server.
 pub async fn dashboard(
     State(state): State<AppState>,
     PageSession(session): PageSession,
 ) -> AppResult<Response> {
-    let prefetched = prefetch_options(&state, &session.sub, None).await;
-
     let mut mcps = Vec::new();
     for m in &state.config.mcps {
-        mcps.push(McpView::build(&state, &session, m, &prefetched).await?);
+        mcps.push(McpView::build(&state, &session, m).await?);
     }
 
     let tpl = DashboardTemplate {
@@ -322,14 +321,12 @@ pub async fn field_options(
     else {
         return Err(AppError::BadRequest("field has no options".into()));
     };
-    // Reaching here means the page's budget was missed, so this is where the
-    // slow half gets measured. The fast half reports from the prefetch.
     let started = std::time::Instant::now();
     match fetch_choices(&state, &session.sub, mcp, &field_id, query).await {
         Ok(choices) => {
-            tracing::info!(
+            tracing::debug!(
                 mcp = %mcp_id, field = %field_id, ms = started.elapsed().as_millis(),
-                "options loaded after the render budget"
+                "options loaded"
             );
             Ok(options_fragment(
                 &choices.options,
@@ -348,6 +345,31 @@ pub async fn field_options(
             }))
         }
     }
+}
+
+/// Whether the backend still accepts the credentials we hold, as the badge.
+///
+/// Its own endpoint for the same reason the options are: this is a round trip
+/// to somebody else, and it used to run inside the page render — once per
+/// configured MCP, one after another, bounded only by the HTTP client's 15s
+/// timeout. Two backends having a slow morning was a dashboard that took
+/// seconds to arrive, and a dead one could hold it for half a minute.
+pub async fn mcp_status(
+    State(state): State<AppState>,
+    FragmentSession(session): FragmentSession,
+    Path(mcp_id): Path<String>,
+) -> AppResult<Response> {
+    let mcp = mcp_or_404(&state, &mcp_id)?;
+    let started = std::time::Instant::now();
+    let verdict = verify(&state, &session.sub, mcp).await;
+    tracing::debug!(
+        mcp = %mcp_id, ms = started.elapsed().as_millis(), ?verdict,
+        "credentials checked"
+    );
+    let view = McpView::build(&state, &session, mcp)
+        .await?
+        .checked(verdict);
+    Ok(render(McpBadgeTemplate { m: view }))
 }
 
 fn status_fragment(message: String, bad: bool) -> Response {

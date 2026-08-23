@@ -1,23 +1,12 @@
 //! The choices a setting offers, which live in a backend rather than here.
 //!
-//! Fetched, filtered and shaped in one place: the page prefetches them, the
-//! htmx endpoint serves whatever missed that, and both render the same control.
-
-use std::collections::HashMap;
+//! Reached only from the endpoint htmx calls. Nothing on this path runs while a
+//! page is being rendered: the choices come from somebody else's calendar
+//! server, and a render that waits on one is a page that a stranger's outage
+//! can hold open.
 
 use axum::response::Response;
 use serde_json::{Value, json};
-
-/// How long the page will wait for every connected setting's choices before
-/// giving up on the stragglers.
-///
-/// They come from the backends, not from us, so this is a network call to
-/// somebody else's calendar server on the way to rendering. Worth doing —
-/// arriving complete beats a control that fills in afterwards — but not worth
-/// the page for. Whatever misses the budget falls back to loading over htmx,
-/// which is also what happens when a backend is refusing outright, so the slow
-/// path is the same path and gets exercised.
-const OPTIONS_BUDGET: std::time::Duration = std::time::Duration::from_millis(600);
 
 use crate::dashboard::{FieldOptionsTemplate, OptionView, render};
 use crate::state::AppState;
@@ -98,9 +87,7 @@ pub(super) struct Choices {
     pub(super) current: String,
 }
 
-/// Ask one backend, with the user's own credentials. Shared so the page's
-/// prefetch and the endpoint htmx calls cannot ask a different question or read
-/// the answer differently — they render the same control, so they had better.
+/// Ask one backend, with the user's own credentials.
 pub(super) async fn fetch_choices(
     state: &AppState,
     sub: &str,
@@ -118,66 +105,6 @@ pub(super) async fn fetch_choices(
         current: credentials.get(field_id).cloned().unwrap_or_default(),
         options: options_of(&data),
     })
-}
-
-/// Every connected setting's choices, fetched concurrently, keyed by MCP and
-/// field. Missing simply means it did not arrive in time.
-pub(super) async fn prefetch_options(
-    state: &AppState,
-    sub: &str,
-    only: Option<&str>,
-) -> HashMap<(String, String), (Value, String)> {
-    let mut tasks = tokio::task::JoinSet::new();
-    for m in state
-        .config
-        .mcps
-        .iter()
-        .filter(|m| only.is_none_or(|id| id == m.id))
-    {
-        for f in &m.fields {
-            let Some(query) = f.options_query.clone() else {
-                continue;
-            };
-            let (state, sub) = (state.clone(), sub.to_string());
-            let (mcp_id, field_id) = (m.id.clone(), f.id.clone());
-            tasks.spawn(async move {
-                let started = std::time::Instant::now();
-                let mcp = state.config.mcp(&mcp_id)?;
-                let choices = fetch_choices(&state, &sub, mcp, &field_id, &query)
-                    .await
-                    .ok()?;
-                // Only the ones that beat the budget report from here; the rest
-                // are abandoned, and the endpoint that then serves them times
-                // them instead. Between the two, every fetch is accounted for.
-                tracing::debug!(
-                    mcp = %mcp_id, field = %field_id, ms = started.elapsed().as_millis(),
-                    "prefetched options"
-                );
-                Some(((mcp_id, field_id), (choices.options, choices.current)))
-            });
-        }
-    }
-
-    let wanted = tasks.len();
-    let deadline = tokio::time::Instant::now() + OPTIONS_BUDGET;
-    let mut out = HashMap::new();
-    while let Ok(Some(finished)) = tokio::time::timeout_at(deadline, tasks.join_next()).await {
-        if let Ok(Some((key, value))) = finished {
-            out.insert(key, value);
-        }
-    }
-
-    // Worth saying out loud rather than leaving as a silently emptier page: it
-    // is the signal that the budget wants revisiting, or that a backend does.
-    if out.len() < wanted {
-        tracing::info!(
-            missed = wanted - out.len(),
-            of = wanted,
-            budget_ms = OPTIONS_BUDGET.as_millis(),
-            "some settings missed the render budget and will load over htmx"
-        );
-    }
-    out
 }
 
 /// The `<option>` list for a setting, with the entries the backend marked

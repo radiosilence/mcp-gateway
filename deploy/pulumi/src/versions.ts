@@ -9,7 +9,7 @@
  * you get. CI refuses a release where `Cargo.toml`, `package.json` and this
  * disagree.
  */
-export const APP_VERSION = "0.8.1";
+export const APP_VERSION = "0.8.2";
 
 export const VERSIONS = {
   gateway: `ghcr.io/radiosilence/mcp-gateway:v${APP_VERSION}`,

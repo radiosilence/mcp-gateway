@@ -98,5 +98,20 @@ export const McpGatewayConfSchema = z.object({
   // Postgres uses the cluster's default StorageClass unless set — a few tiny
   // tables, so (unlike the media services) we don't pin them to a disk path.
   postgresStorageClass: z.string().optional(),
+  /**
+   * Which node Hydra and its Postgres run on, by hostname.
+   *
+   * They must be together: every OAuth step is a database round trip, so a
+   * cluster spanning links of different quality will otherwise put the
+   * authorization server and its data on either side of the worst one. Nothing
+   * makes that happen deliberately — an unconstrained pod goes wherever has the
+   * most unrequested capacity, which on a mixed cluster is usually the machine
+   * you least want it on.
+   *
+   * Absent, the scheduler chooses, and the dynamically-provisioned volume then
+   * anchors Postgres wherever it first landed while Hydra stays free to drift
+   * away from it.
+   */
+  node: z.string().optional(),
   mcps: z.array(McpSchema).default([]),
 });

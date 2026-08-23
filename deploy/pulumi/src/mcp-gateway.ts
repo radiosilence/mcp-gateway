@@ -206,6 +206,9 @@ export function createMcpGateway(
         template: {
           metadata: { labels: { app: pgHost } },
           spec: {
+            ...(conf.node && {
+              nodeSelector: { "kubernetes.io/hostname": conf.node },
+            }),
             containers: [
               {
                 name: "postgres",
@@ -317,6 +320,9 @@ export function createMcpGateway(
         template: {
           metadata: { labels: { app: "mcp-gateway-hydra" } },
           spec: {
+            ...(conf.node && {
+              nodeSelector: { "kubernetes.io/hostname": conf.node },
+            }),
             containers: [
               {
                 name: "hydra",

@@ -362,4 +362,22 @@ mod tests {
     fn pending_is_not_mistaken_for_unconfigured() {
         assert!(!badge(pending()).contains("Not configured"));
     }
+
+    /// Both full pages, because the whole use of a version in the corner is
+    /// being able to read it off whichever page is in front of you — and the
+    /// login page is the one you are looking at when the dashboard won't load.
+    #[test]
+    fn every_page_says_which_build_it_is() {
+        let want = format!("v{}", crate::VERSION);
+        assert!(IndexTemplate.render().unwrap().contains(&want));
+        assert!(
+            DashboardTemplate {
+                login: "somebody".into(),
+                mcps: Vec::new(),
+            }
+            .render()
+            .unwrap()
+            .contains(&want)
+        );
+    }
 }

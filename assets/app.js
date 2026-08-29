@@ -1,8 +1,7 @@
-// htmx, vendored. Imported rather than script-tagged so there is one entry
-// point and no global; an absolute specifier because a bare one would need
-// an import map, and those are inline script the CSP refuses.
-import "/assets/htmx.esm.min.js";
-
+// Datastar is loaded by its own <script type="module"> beside this one rather
+// than imported here, which is how mariastew loads it too — it installs itself
+// on the document and exports nothing worth holding.
+//
 // A module, so it runs after parsing and needs no ready handler.
 
 // Copy buttons: the value rides on the element, so one listener covers however

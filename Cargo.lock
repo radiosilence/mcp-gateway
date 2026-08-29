@@ -1204,13 +1204,14 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp-gateway"
-version = "0.8.6"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "askama",
  "axum",
  "base64 0.23.1",
  "chacha20poly1305",
+ "futures-util",
  "http",
  "rand 0.10.2",
  "reqwest",

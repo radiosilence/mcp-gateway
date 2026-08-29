@@ -54,8 +54,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const APP_CSS: &str = include_str!("../assets/app.css");
 const APP_JS: &str = include_str!("../assets/app.js");
 /// Vendored rather than fetched: same reasoning as the rest, and a pinned copy
-/// in the tree is also the only version anyone can be served.
-const HTMX_JS: &str = include_str!("../assets/htmx.esm.min.js");
+/// in the tree is also the only version anyone can be served. The same v1.0.2
+/// build mariastew carries, so the two cannot drift onto different semantics
+/// for the same attribute.
+const DATASTAR_JS: &str = include_str!("../assets/datastar.js");
 
 async fn app_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
@@ -73,10 +75,23 @@ async fn app_js() -> impl IntoResponse {
 /// files and no handler is written into the markup, which is the whole reason
 /// they were moved out. `data:` covers the inline SVG favicon.
 ///
-/// The value of this is narrow but real — it is the difference between an
-/// injected string becoming script on a page holding credentials, and not.
+/// `unsafe-eval` is Datastar's price, and is not optional: it compiles each
+/// `data-*` expression with `Function()`, so without it no attribute on this
+/// page does anything. Serving the bundle ourselves does not change that — eval
+/// is about turning strings into code, not about where the file came from.
+///
+/// What it costs is worth stating plainly, because this is the page people type
+/// their credentials into. `script-src 'self'` still refuses script from
+/// anywhere else, so nothing new can be *loaded*. What changes is that a
+/// `data-*` attribute built from an unescaped value would be executable, and
+/// this line would no longer be what stopped it. Askama escapes by default and
+/// nothing here opts out; `no_template_opts_out_of_escaping` is the control that
+/// used to have this as a backstop and now stands on its own.
+///
+/// Shared verbatim with mariastew, which reached the same policy from the other
+/// direction — it served no headers at all until this comparison was made.
 const CSP: &str = "default-src 'self'; \
-     script-src 'self'; \
+     script-src 'self' 'unsafe-eval'; \
      style-src 'self'; \
      img-src 'self' data:; \
      connect-src 'self'; \
@@ -107,10 +122,10 @@ async fn security_headers(request: axum::extract::Request, next: middleware::Nex
     response
 }
 
-async fn htmx_js() -> impl IntoResponse {
+async fn datastar_js() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        HTMX_JS,
+        DATASTAR_JS,
     )
 }
 
@@ -176,7 +191,7 @@ async fn main() -> Result<()> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
-        .route("/assets/htmx.esm.min.js", get(htmx_js))
+        .route("/assets/datastar.js", get(datastar_js))
         .route("/login", get(auth::routes::login))
         .route("/logout", get(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
@@ -248,7 +263,14 @@ mod tests {
             !csp.contains("unsafe-inline"),
             "csp has an inline escape hatch"
         );
-        assert!(!csp.contains("unsafe-eval"), "csp has an eval escape hatch");
+        // Datastar cannot work without the eval hatch, so that one is stated
+        // and argued for above. `unsafe-inline` is the one nothing here needs,
+        // and it is what someone reaches for to make a stray inline handler
+        // work — which is exactly the change this should refuse.
+        assert!(
+            csp.contains("'unsafe-eval'"),
+            "datastar needs the eval hatch"
+        );
         assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
         assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
         assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
@@ -262,10 +284,88 @@ mod tests {
             APP_JS.contains("data-copy"),
             "app.js is not the real script"
         );
-        // The module entry has to pull htmx in, and htmx has to be the module
-        // build — a classic script imported this way exports nothing and
-        // silently never initialises.
-        assert!(APP_JS.contains(r#"import "/assets/htmx.esm.min.js""#));
-        assert!(HTMX_JS.contains("export default htmx"), "not the esm build");
+        assert!(
+            DATASTAR_JS.starts_with("// Datastar v1.0.2"),
+            "not the pinned datastar build"
+        );
+    }
+
+    /// Datastar's own triggers are hyphenated (`data-on-interval`) and DOM
+    /// events are not (`data-on:click`). Getting that backwards is not an
+    /// error: the attribute matches no plugin, so the control renders, looks
+    /// right, and does nothing. `data-on-load` is the trap this migration was
+    /// one keystroke from — there is no `load` plugin at all, only `init`.
+    ///
+    /// The names are read out of the vendored bundle rather than copied from
+    /// documentation, so a version bump that renames or drops one fails here
+    /// rather than in a browser.
+    #[test]
+    fn every_datastar_attribute_is_one_datastar_matches() {
+        let registered: Vec<&str> = DATASTAR_JS
+            .match_indices("name:\"")
+            .filter_map(|(i, m)| {
+                let rest = &DATASTAR_JS[i + m.len()..];
+                rest.find('"').map(|end| &rest[..end])
+            })
+            .collect();
+        assert!(
+            registered.contains(&"init") && registered.contains(&"on"),
+            "the bundle registers neither `init` nor `on`; the scan is wrong, not the templates"
+        );
+
+        // Ours, read by app.js. Datastar ignores it and so should this.
+        const OURS: &[&str] = &["copy"];
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        for entry in std::fs::read_dir(&dir).expect("templates/") {
+            let path = entry.expect("entry").path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let body = std::fs::read_to_string(&path).expect("readable");
+            for chunk in body.split(" data-").skip(1) {
+                let attr: String = chunk
+                    .chars()
+                    .take_while(|c| !matches!(c, '=' | ' ' | '"' | '>' | '\n'))
+                    .collect();
+                // `data-on:submit__prevent` names the `on` plugin; the key and
+                // the modifiers are its arguments.
+                let plugin = attr
+                    .split(&[':', '_'][..])
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                assert!(
+                    registered.contains(&plugin.as_str()) || OURS.contains(&plugin.as_str()),
+                    "{name}: `data-{attr}` names no Datastar plugin — it will be ignored silently"
+                );
+            }
+        }
+    }
+
+    /// With eval allowed, escaping is the only thing between a string that
+    /// reaches the DOM and code that runs: Datastar compiles `data-*`
+    /// attributes, so an unescaped value rendered into one is executable by
+    /// design. Backends supply strings this page renders — option labels and
+    /// values, and the error text a failed lookup shows — so this is not
+    /// hypothetical.
+    ///
+    /// Askama escapes by default. What needs watching is the opt-outs, and
+    /// there are none: a `|safe` here would have to be argued for, and this is
+    /// where the argument gets made.
+    #[test]
+    fn no_template_opts_out_of_escaping() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("templates/") {
+            let path = entry.expect("entry").path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            for line in std::fs::read_to_string(&path).expect("readable").lines() {
+                // `safe-area-inset` in a Tailwind class is not the filter.
+                if line.contains("|safe") || line.contains("escape(") {
+                    found.push(format!("{name}: {}", line.trim()));
+                }
+            }
+        }
+        found.sort();
+        assert_eq!(found, Vec::<String>::new());
     }
 }

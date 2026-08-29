@@ -7,15 +7,15 @@
      pending pill that fetches its own replacement. The answer comes back with
      the URL cleared, which is what stops it looping. -#}
 {%- if !m.status_url.is_empty() %}
-{% call ui::badge("bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 ring-slate-200 dark:ring-slate-700 animate-pulse", "bg-slate-400", "Checking…", m.status_url) %}{% endcall %}
+{% call ui::badge(m.status_id(), "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 ring-slate-200 dark:ring-slate-700 animate-pulse", "bg-slate-400", "Checking…", m.status_url) %}{% endcall %}
 {%- else if !m.has_credential %}
-{% call ui::badge("bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 ring-amber-200 dark:ring-amber-900", "bg-amber-500", "Not configured", "") %}{% endcall %}
+{% call ui::badge(m.status_id(), "bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 ring-amber-200 dark:ring-amber-900", "bg-amber-500", "Not configured", "") %}{% endcall %}
 {%- else if m.rejected %}
-{% call ui::badge("bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 ring-red-200 dark:ring-red-900", "bg-red-500", "Credentials rejected", "") %}{% endcall %}
+{% call ui::badge(m.status_id(), "bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 ring-red-200 dark:ring-red-900", "bg-red-500", "Credentials rejected", "") %}{% endcall %}
 {%- else if m.verified || m.public %}
-{% call ui::badge("bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 ring-emerald-200 dark:ring-emerald-900", "bg-emerald-500", "Connected", "") %}{% endcall %}
+{% call ui::badge(m.status_id(), "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 ring-emerald-200 dark:ring-emerald-900", "bg-emerald-500", "Connected", "") %}{% endcall %}
 {%- else %}
 {#- Stored, and a backend was asked but could not say. Said plainly rather than
     shown as green, which would be a claim we cannot make. -#}
-{% call ui::badge("bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 ring-slate-200 dark:ring-slate-700", "bg-slate-400", "Configured", "") %}{% endcall %}
+{% call ui::badge(m.status_id(), "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 ring-slate-200 dark:ring-slate-700", "bg-slate-400", "Configured", "") %}{% endcall %}
 {%- endif %}

@@ -18,15 +18,21 @@
 {% macro field_skeleton() %}{% call field_box() %}{% endcall %} pointer-events-none animate-pulse text-transparent bg-slate-200 dark:bg-slate-700 ring-slate-200 dark:ring-slate-700{% endmacro %}
 
 {#- The line under a setting. One definition: the page renders it empty and a
-     save replaces it, and those drifting apart is how the last one broke. -#}
-{% macro field_status(text, bad) %}<span class="mt-1 block text-xs {% if bad %}text-amber-600 dark:text-amber-400{% else %}text-slate-400 dark:text-slate-500{% endif %}" data-status>{{ text }}</span>{% endmacro %}
+     save replaces it, and those drifting apart is how the last one broke.
+
+     It carries an id because Datastar patches by id — under htmx this was
+     reached as `next [data-status]`, which needed only to be in the right
+     place. Being named instead is the whole shape of the migration. -#}
+{% macro field_status(id, text, bad) %}<span id="{{ id }}" class="mt-1 block text-xs {% if bad %}text-amber-600 dark:text-amber-400{% else %}text-slate-400 dark:text-slate-500{% endif %}">{{ text }}</span>{% endmacro %}
 
 {#- The badge. Colours arrive as whole class names rather than being built from
      a tone, because Tailwind scans for literals — `bg-{tone}-50` generates
      nothing and the badge renders unstyled. Structure is shared; the palette
      stays visible at the call site.
 
-     A non-empty `load_url` makes it fetch its own replacement. Here rather than
-     as a second macro because the pill that asks and the pill that answers have
-     to be the same size, or the swap moves the page. -#}
-{% macro badge(colours, dot, label, load_url) %}<span{% if !load_url.is_empty() %} hx-get="{{ load_url }}" hx-trigger="load" hx-swap="outerHTML" aria-busy="true"{% endif %} class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 {{ colours }}"><span class="h-1.5 w-1.5 rounded-full {{ dot }}"></span> {{ label }}</span>{% endmacro %}
+     A non-empty `load_url` makes it fetch its own replacement — `data-init`
+     rather than a `load` trigger, because Datastar has no such event: `init`
+     is its once-when-set-up plugin. Here rather than as a second macro because
+     the pill that asks and the pill that answers have to be the same size, or
+     the swap moves the page. -#}
+{% macro badge(id, colours, dot, label, load_url) %}<span id="{{ id }}"{% if !load_url.is_empty() %} data-init="@get('{{ load_url }}')" aria-busy="true"{% endif %} class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 {{ colours }}"><span class="h-1.5 w-1.5 rounded-full {{ dot }}"></span> {{ label }}</span>{% endmacro %}

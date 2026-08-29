@@ -1,6 +1,6 @@
 [package]
 name = "mcp-gateway"
-version = "0.8.6"
+version = "0.9.0"
 edition = "2024"
 description = "OAuth-fronted gateway for self-hosted MCP servers: one AS + credential vault + dashboard, routing to per-MCP backends with the right secret injected"
 repository = "https://github.com/radiosilence/mcp-gateway"
@@ -13,6 +13,8 @@ path = "src/main.rs"
 [dependencies]
 # Generic gateway — it links no MCP; each MCP is a backend it proxies to.
 axum = "0.8"
+# `stream::once`, for the single-event SSE body every fragment answers with.
+futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
 tower-http = { version = "0.7", features = ["trace"] }

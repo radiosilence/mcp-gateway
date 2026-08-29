@@ -7,9 +7,12 @@
 //! still works — is an endpoint htmx calls once the page is already up.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 
 use askama::Template;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::sse::Event;
+use axum::response::{IntoResponse, Response, Sse};
+use futures_util::stream;
 
 use crate::config::Mcp;
 use crate::dashboard::options::Verified;
@@ -58,12 +61,16 @@ pub(super) struct FieldOptionsTemplate {
 #[derive(Template)]
 #[template(path = "field_options_error.html")]
 pub(super) struct FieldOptionsErrorTemplate {
+    /// It stands in the control's slot, so it answers to the control's id.
+    pub(super) mcp_id: String,
+    pub(super) field_id: String,
     pub(super) error: String,
 }
 
 #[derive(Template)]
 #[template(path = "field_status.html")]
 pub(super) struct FieldStatusTemplate {
+    pub(super) id: String,
     pub(super) message: String,
     pub(super) bad: bool,
 }
@@ -268,6 +275,13 @@ impl McpView {
         })
     }
 
+    /// What the badge answers to. One definition because the page renders it
+    /// and the status endpoint patches it, and a patch aimed at an id nothing
+    /// carries is silent — it neither errors nor appears.
+    pub(super) fn status_id(&self) -> String {
+        format!("status-{}", self.id)
+    }
+
     /// Settle the badge with what a backend actually said.
     ///
     /// Clearing `status_url` is what stops the swapped-in pill asking again:
@@ -292,14 +306,38 @@ pub(super) fn mcp_or_404<'a>(state: &'a AppState, id: &str) -> AppResult<&'a Mcp
         .ok_or_else(|| AppError::BadRequest("unknown mcp".into()))
 }
 
+/// The `data:` payload of a `datastar-patch-elements` event: every line of
+/// `html` prefixed with `elements `. Split out from [`render`] so the prefixing
+/// is testable without going near `Event`'s internals.
+pub(super) fn patch_elements_data(html: &str) -> String {
+    html.lines()
+        .map(|line| format!("elements {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A fragment, as the one SSE event Datastar expects back.
+///
+/// Every mutation and every lazy load answers this way: one event, then the
+/// stream ends. Nothing here is long-lived — unlike mariastew, which holds a
+/// stream open and pushes rows down it as aria2 moves — but the event and its
+/// payload are the same shape, so the two repositories mean the same thing by
+/// a patch.
+///
+/// The client morphs by element id, which is why everything patchable in these
+/// templates now carries one. That is the real change from what this replaced:
+/// htmx targeted by relation — `closest section`, `next [data-status]` — so the
+/// markup only had to be *positioned* correctly, where now it has to be *named*
+/// correctly.
 pub(super) fn render<T: Template>(template: T) -> Response {
-    match template.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => {
-            tracing::error!(error = %e, "fragment render failed");
-            Html("<span data-status>Could not render</span>").into_response()
-        }
-    }
+    let html = template.render().unwrap_or_else(|e| {
+        tracing::error!(error = %e, "fragment render failed");
+        String::new()
+    });
+    let event = Event::default()
+        .event("datastar-patch-elements")
+        .data(patch_elements_data(&html));
+    Sse::new(stream::once(async move { Ok::<_, Infallible>(event) })).into_response()
 }
 
 #[cfg(test)]
@@ -367,17 +405,28 @@ mod tests {
 
     /// The one way this shape can go wrong: the answer renders from the same
     /// template as the question, so an answer that kept its URL would carry
-    /// another `hx-trigger="load"` and fetch itself for as long as the tab is
-    /// open — a backend hammered by every idle dashboard.
+    /// another `data-init` and fetch itself for as long as the tab is open — a
+    /// backend hammered by every idle dashboard.
     #[test]
     fn a_settled_badge_does_not_ask_again() {
-        assert!(badge(pending()).contains("hx-get=\"/dashboard/caldav/status\""));
+        assert!(badge(pending()).contains("data-init=\"@get('/dashboard/caldav/status')\""));
         for verdict in [Verified::Yes, Verified::Rejected, Verified::Unknown] {
             assert!(
-                !badge(pending().checked(verdict)).contains("hx-get"),
+                !badge(pending().checked(verdict)).contains("data-init"),
                 "{verdict:?} left the badge fetching itself"
             );
         }
+    }
+
+    /// Every badge answers to the id the status endpoint patches. A patch aimed
+    /// at an id nothing carries is silent — no error, no swap, just a pill that
+    /// stays pending — so this is worth stating rather than assuming.
+    #[test]
+    fn the_badge_carries_the_id_the_patch_will_look_for() {
+        for verdict in [Verified::Yes, Verified::Rejected, Verified::Unknown] {
+            assert!(badge(pending().checked(verdict)).contains(r#"id="status-caldav""#));
+        }
+        assert!(badge(pending()).contains(r#"id="status-caldav""#));
     }
 
     #[test]
@@ -443,6 +492,23 @@ mod tests {
                 "focus:ring-indigo-500",
             ]
         );
+    }
+
+    /// Datastar reads a patch as one `elements` line per line of markup, and
+    /// `Event::data` turns an embedded newline into a repeated `data:` field —
+    /// which is what makes the joined string arrive as the several lines it
+    /// was. A fragment sent as one unprefixed blob parses as nothing and is
+    /// dropped without complaint, so the prefixing is worth stating.
+    #[test]
+    fn a_patch_prefixes_every_line_it_sends() {
+        assert_eq!(patch_elements_data("<p>one</p>"), "elements <p>one</p>");
+        assert_eq!(
+            patch_elements_data("<div>\n  <p>two</p>\n</div>"),
+            "elements <div>\nelements   <p>two</p>\nelements </div>"
+        );
+        // Askama leaves a trailing newline on most fragments; `lines()` drops
+        // it rather than emitting a bare `elements ` the client has to ignore.
+        assert_eq!(patch_elements_data("<p>x</p>\n"), "elements <p>x</p>");
     }
 
     /// Both full pages, because the whole use of a version in the corner is
@@ -578,8 +644,12 @@ mod preview {
             .replace(
                 r#"<script type="module" src="/assets/app.js"></script>"#,
                 "",
+            )
+            .replace(
+                r#"<script type="module" src="/assets/datastar.js"></script>"#,
+                "",
             );
-        // htmx is dropped along with the stylesheet link, so the page keeps
+        // Datastar is dropped along with the stylesheet link, so the page keeps
         // the states it was rendered in: the skeleton stays a skeleton and the
         // badge stays pending, which is the half that is otherwise hardest to
         // catch in the act.

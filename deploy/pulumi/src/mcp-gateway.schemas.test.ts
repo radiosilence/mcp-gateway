@@ -73,3 +73,17 @@ describe("McpSchema credentials", () => {
     expect(() => McpSchema.parse({ ...base, public: false })).toThrow();
   });
 });
+
+describe("McpSchema placement", () => {
+  const creds = { id: "x", name: "X", credentialHeader: "X-Token" };
+
+  it("accepts a backend deployed elsewhere, by URL", () => {
+    const b = McpSchema.parse({ ...creds, url: "http://slsk-internal:8081" });
+    expect(b.image).toBeUndefined();
+  });
+
+  it("refuses both an image and a URL, and neither", () => {
+    expect(() => McpSchema.parse({ ...creds, image: "i", url: "http://a:1" })).toThrow();
+    expect(() => McpSchema.parse(creds)).toThrow();
+  });
+});

@@ -37,7 +37,15 @@ export const McpSchema = z
   .object({
     id: z.string(),
     name: z.string(),
-    image: z.string(),
+    /** The gateway deploys this image as the backend. */
+    image: z.string().optional(),
+    /**
+     * A backend deployed by something else, as `http://host:port`: one whose
+     * pod needs what a generic backend deployment cannot give it — a node,
+     * volumes, a host port. The deployer owns that pod, its Service and its
+     * NetworkPolicy; the gateway only routes to it.
+     */
+    url: z.url({ protocol: /^https?$/ }).optional(),
     args: z.array(z.string()).default([]),
     port: z.number().default(8080),
     path: z.string().default("/mcp"),
@@ -78,7 +86,10 @@ export const McpSchema = z
       [!!b.credentialHeader, !!b.fields?.length, !!b.public].filter(Boolean)
         .length === 1,
     { message: "set exactly one of credentialHeader, fields, or public" },
-  );
+  )
+  .refine((b) => !!b.image !== !!b.url, {
+    message: "set exactly one of image (deployed here) or url (deployed elsewhere)",
+  });
 
 /** The MCP Gateway stack (gateway + Hydra + Postgres + the MCPs it fronts). */
 export const McpGatewayConfSchema = z.object({

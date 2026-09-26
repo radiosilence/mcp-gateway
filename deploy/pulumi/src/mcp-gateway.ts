@@ -41,8 +41,10 @@ export function mcpRegistry(
 ) {
   return yaml.stringify(
     mcps.map((m) => {
-      const url = (path: string) =>
-        `http://${svcDns(`mcp-gateway-mcp-${m.id}`)}:${m.port}${path}`;
+      const base = m.url
+        ? m.url.replace(/\/+$/, "")
+        : `http://${svcDns(`mcp-gateway-mcp-${m.id}`)}:${m.port}`;
+      const url = (path: string) => `${base}${path}`;
       return {
         id: m.id,
         name: m.name,
@@ -408,7 +410,8 @@ export function createMcpGateway(
   );
 
   // --- Backend MCPs (one Deployment + Service each) ---
-  for (const b of conf.mcps) {
+  // Backends given by URL are someone else's to deploy and to confine.
+  for (const b of conf.mcps.filter((m): m is typeof m & { image: string } => !!m.image)) {
     new k8s.apps.v1.Deployment(
       `mcp-gateway-backend-${b.id}`,
       {

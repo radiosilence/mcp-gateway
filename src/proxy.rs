@@ -40,14 +40,14 @@ pub async fn handle(
 
     // Authenticate: opaque bearer → introspect → subject.
     let Some(token) = bearer(&headers) else {
-        return challenge(&state);
+        return challenge(&state, &id);
     };
     let sub = match state.hydra.introspect(&token).await {
         Ok(Some(sub)) => sub,
-        Ok(None) => return challenge(&state),
+        Ok(None) => return challenge(&state, &id),
         Err(e) => {
             tracing::debug!(error = %e, "introspection failed");
-            return challenge(&state);
+            return challenge(&state, &id);
         }
     };
 
@@ -140,11 +140,8 @@ fn bearer(headers: &HeaderMap) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn challenge(state: &AppState) -> Response {
-    let metadata_url = format!(
-        "{}/.well-known/oauth-protected-resource",
-        state.config.public_url.trim_end_matches('/')
-    );
+fn challenge(state: &AppState, id: &str) -> Response {
+    let metadata_url = crate::well_known::metadata_url(state, id);
     (
         StatusCode::UNAUTHORIZED,
         [(

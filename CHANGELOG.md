@@ -3,6 +3,17 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2]
+
+### Fixed
+
+- **Each MCP is its own protected resource.** The 401 challenge for `/{id}`
+  names `/.well-known/oauth-protected-resource/{id}`, whose `resource` is
+  `{public_url}/{id}`. Clients that check the metadata's `resource` against
+  the URL they connected to (RFC 9728 §3.3) rejected the gateway-wide
+  document and never reached the authorization server. The gateway-wide
+  document is still served for clients that look there.
+
 ## [0.9.1]
 
 ### Added

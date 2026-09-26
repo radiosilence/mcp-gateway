@@ -37,6 +37,20 @@ describe("mcpRegistry", () => {
     );
   });
 
+  it("uses a URL backend as given, for its MCP and GraphQL paths", () => {
+    const [entry] = parse([
+      {
+        id: "slsk",
+        name: "Soulseek",
+        url: "http://slsk-internal:8081/",
+        graphqlPath: "/graphql",
+        credentialHeader: "X-Token",
+      },
+    ]);
+    expect(entry.backend).toBe("http://slsk-internal:8081/mcp");
+    expect(entry.graphql).toBe("http://slsk-internal:8081/graphql");
+  });
+
   it("renames camelCase config onto the gateway's snake_case keys", () => {
     const [entry] = parse([
       {

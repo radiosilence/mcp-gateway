@@ -3,6 +3,18 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1]
+
+### Added
+
+- **Backends deployed elsewhere.** An MCP entry may give `url` instead of
+  `image`, and the gateway routes to it without deploying anything. For
+  backends whose pod needs what a generic backend deployment cannot give it —
+  a particular node, host volumes, a host port — such as a Soulseek client
+  sharing a music library. Whoever deploys that pod owns its Service and its
+  NetworkPolicy; the gateway's backend policy selects only the pods it
+  deploys.
+
 ## [0.9.0]
 
 ### Changed

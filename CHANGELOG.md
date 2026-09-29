@@ -3,6 +3,16 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0]
+
+### Added
+
+- **Personal access tokens for callers that cannot sign in.** A scheduled job
+  or a voice agent can now reach an MCP with a long-lived bearer issued from
+  the dashboard, optionally limited to some MCPs and revocable there. Tokens
+  are stored as hashes and shown once. The proxy resolves them from its own
+  table by their `mgw_` prefix instead of introspecting them at Hydra.
+
 ## [0.9.2]
 
 ### Fixed

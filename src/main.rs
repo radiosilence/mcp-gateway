@@ -210,6 +210,14 @@ async fn main() -> Result<()> {
             post(dashboard::delete_credential),
         )
         .route(
+            "/dashboard/access-tokens",
+            post(dashboard::create_access_token),
+        )
+        .route(
+            "/dashboard/access-tokens/{token_id}/revoke",
+            post(dashboard::revoke_access_token),
+        )
+        .route(
             "/.well-known/oauth-protected-resource",
             get(well_known::protected_resource),
         )

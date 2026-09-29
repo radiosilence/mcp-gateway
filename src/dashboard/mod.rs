@@ -11,8 +11,11 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+mod access_tokens;
 mod options;
 mod view;
+
+pub use access_tokens::{create as create_access_token, revoke as revoke_access_token};
 
 use view::*;
 
@@ -62,9 +65,11 @@ pub async fn dashboard(
         mcps.push(McpView::build(&state, &session, m).await?);
     }
 
+    let access = access_tokens::AccessTokensView::build(&state, &session).await?;
     let tpl = DashboardTemplate {
         login: session.login,
         mcps,
+        access,
     };
     let html = tpl.render().map_err(|e| AppError::Internal(e.into()))?;
     Ok(Html(html).into_response())

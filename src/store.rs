@@ -55,27 +55,43 @@ impl TokenMeta {
             .unwrap_or_else(|_| self.updated_at.to_string())
     }
 
-    /// How long ago, in words. Rendered by the server because the alternative
-    /// needs the viewer's timezone, which the server does not have — and an
-    /// exact time formatted in the wrong zone, or an ISO string sitting there
-    /// until scripting rewrites it, are both worse than "3 hours ago". This
-    /// says the thing the dashboard is actually asked: is it recent.
+    /// How long ago, in words. See [`ago`].
     pub fn updated_ago(&self) -> String {
-        let seconds = (OffsetDateTime::now_utc() - self.updated_at).whole_seconds();
-        // A clock skewed the other way should not read "in -3 minutes".
-        let seconds = seconds.max(0);
-        let (n, unit) = match seconds {
-            0..60 => return "just now".into(),
-            60..3_600 => (seconds / 60, "minute"),
-            3_600..86_400 => (seconds / 3_600, "hour"),
-            86_400..2_592_000 => (seconds / 86_400, "day"),
-            _ => (seconds / 2_592_000, "month"),
-        };
-        match n {
-            1 => format!("1 {unit} ago"),
-            n => format!("{n} {unit}s ago"),
-        }
+        ago(self.updated_at)
     }
+}
+
+/// How long ago, in words. Rendered by the server because the alternative
+/// needs the viewer's timezone, which the server does not have — and an exact
+/// time formatted in the wrong zone, or an ISO string sitting there until
+/// scripting rewrites it, are both worse than "3 hours ago". This says the
+/// thing the dashboard is actually asked: is it recent.
+pub fn ago(then: OffsetDateTime) -> String {
+    let seconds = (OffsetDateTime::now_utc() - then).whole_seconds();
+    // A clock skewed the other way should not read "in -3 minutes".
+    let seconds = seconds.max(0);
+    let (n, unit) = match seconds {
+        0..60 => return "just now".into(),
+        60..3_600 => (seconds / 60, "minute"),
+        3_600..86_400 => (seconds / 3_600, "hour"),
+        86_400..2_592_000 => (seconds / 86_400, "day"),
+        _ => (seconds / 2_592_000, "month"),
+    };
+    match n {
+        1 => format!("1 {unit} ago"),
+        n => format!("{n} {unit}s ago"),
+    }
+}
+
+/// A personal access token as the dashboard lists it. The token itself is
+/// not here: only its hash is stored, and that is never read back out.
+pub struct AccessToken {
+    pub id: String,
+    pub name: String,
+    /// `None` reaches every MCP.
+    pub mcp_ids: Option<Vec<String>>,
+    pub created_at: OffsetDateTime,
+    pub last_used_at: Option<OffsetDateTime>,
 }
 
 /// A user's values for one MCP, keyed by [`crate::config::CredentialField::id`].
@@ -183,6 +199,88 @@ impl Store {
         Ok(row.map(|row| TokenMeta {
             updated_at: row.get("updated_at"),
         }))
+    }
+
+    // ---- Personal access tokens ----
+
+    /// Store a new token's hash. Returns the token's id, which is what the
+    /// dashboard revokes by; the token itself never reaches the store.
+    pub async fn create_access_token(
+        &self,
+        sub: &str,
+        name: &str,
+        token_hash: &str,
+        mcp_ids: Option<&[String]>,
+    ) -> Result<String> {
+        let id = new_id();
+        sqlx::query(
+            "INSERT INTO access_tokens (id, sub, name, token_hash, mcp_ids)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(&id)
+        .bind(sub)
+        .bind(name)
+        .bind(token_hash)
+        .bind(mcp_ids)
+        .execute(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    pub async fn list_access_tokens(&self, sub: &str) -> Result<Vec<AccessToken>> {
+        let rows = sqlx::query(
+            "SELECT id, name, mcp_ids, created_at, last_used_at FROM access_tokens
+             WHERE sub = $1 ORDER BY created_at DESC",
+        )
+        .bind(sub)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| AccessToken {
+                id: row.get("id"),
+                name: row.get("name"),
+                mcp_ids: row.get("mcp_ids"),
+                created_at: row.get("created_at"),
+                last_used_at: row.get("last_used_at"),
+            })
+            .collect())
+    }
+
+    /// Revoke one of `sub`'s tokens. Scoped to the owner so an id alone,
+    /// guessed or leaked, cannot revoke somebody else's.
+    pub async fn delete_access_token(&self, sub: &str, id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM access_tokens WHERE sub = $1 AND id = $2")
+            .bind(sub)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Resolve a token hash to its owner and scope, marking it used.
+    ///
+    /// The use is recorded at most once a minute: an MCP session is a burst
+    /// of requests, and one write per request would be a write per tool call
+    /// for a timestamp nobody reads at that resolution.
+    pub async fn use_access_token(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<(String, Option<Vec<String>>)>> {
+        let row = sqlx::query(
+            "WITH t AS (
+                 SELECT id, sub, mcp_ids, last_used_at FROM access_tokens WHERE token_hash = $1
+             ), touched AS (
+                 UPDATE access_tokens SET last_used_at = now() FROM t
+                 WHERE access_tokens.id = t.id
+                   AND (t.last_used_at IS NULL OR t.last_used_at < now() - interval '1 minute')
+             )
+             SELECT sub, mcp_ids FROM t",
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|row| (row.get("sub"), row.get("mcp_ids"))))
     }
 
     // ---- Dashboard sessions (opaque id → server-side state) ----

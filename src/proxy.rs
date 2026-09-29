@@ -1,6 +1,7 @@
 //! Streaming reverse proxy: `/mcp/{id}` → the backend MCP for `{id}`.
 //!
-//! Per request: introspect the bearer at Hydra → `sub`, look up + decrypt the
+//! Per request: resolve the bearer to a `sub` (Hydra introspection, or our own
+//! table for a personal access token), look up + decrypt the
 //! user's credentials for this MCP, strip any client-supplied copy of those
 //! headers, inject the real ones, forward, and stream the response back
 //! (MCP streamable-HTTP responses can be SSE, so the body is streamed, not
@@ -14,6 +15,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
+use crate::auth::access_token;
 use crate::state::AppState;
 
 const HOP_BY_HOP: [&str; 8] = [
@@ -38,17 +40,11 @@ pub async fn handle(
         return (StatusCode::NOT_FOUND, "unknown mcp").into_response();
     };
 
-    // Authenticate: opaque bearer → introspect → subject.
     let Some(token) = bearer(&headers) else {
         return challenge(&state, &id);
     };
-    let sub = match state.hydra.introspect(&token).await {
-        Ok(Some(sub)) => sub,
-        Ok(None) => return challenge(&state, &id),
-        Err(e) => {
-            tracing::debug!(error = %e, "introspection failed");
-            return challenge(&state, &id);
-        }
+    let Some(sub) = authenticate(&state, &token, &id).await else {
+        return challenge(&state, &id);
     };
 
     // Forward headers minus hop-by-hop, auth, host, length — and critically
@@ -129,6 +125,35 @@ pub async fn handle(
     *out.status_mut() = status;
     *out.headers_mut() = resp_headers;
     out
+}
+
+/// The subject a bearer speaks for, if it may reach `mcp_id`.
+///
+/// A personal access token is resolved here and never sent to Hydra; anything
+/// else is introspected. A token scoped away from this MCP gets the same 401
+/// as an unknown one, so a probe cannot learn which MCPs a leaked token covers.
+async fn authenticate(state: &AppState, token: &str, mcp_id: &str) -> Option<String> {
+    if access_token::is_access_token(token) {
+        return match state
+            .store
+            .use_access_token(&access_token::hash(token))
+            .await
+        {
+            Ok(Some((sub, scope))) if access_token::permits(scope.as_deref(), mcp_id) => Some(sub),
+            Ok(_) => None,
+            Err(e) => {
+                tracing::error!(error = %e, "access token lookup failed");
+                None
+            }
+        };
+    }
+    match state.hydra.introspect(token).await {
+        Ok(sub) => sub,
+        Err(e) => {
+            tracing::debug!(error = %e, "introspection failed");
+            None
+        }
+    }
 }
 
 fn bearer(headers: &HeaderMap) -> Option<String> {

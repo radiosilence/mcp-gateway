@@ -305,6 +305,23 @@ single encrypted column. Rows written before this (a bare secret rather than a
 JSON object) decode onto the MCP's first field, so **existing Fastmail tokens
 keep working with no migration**.
 
+## Access tokens
+
+Some callers cannot run an OAuth flow: a scheduled job has no browser, and a
+voice agent sends the same fixed header on every request and has no way to
+refresh. The dashboard issues personal access tokens for them.
+
+A token acts as the user who made it, so the proxy injects that user's
+credentials exactly as it would for their OAuth token. It can be limited to
+some MCPs; an unlimited one also reaches MCPs registered later. Tokens carry an
+`mgw_` prefix, which is how the proxy tells them from Hydra's: a prefixed
+bearer is looked up in the gateway's own table and never introspected, and an
+unprefixed one never touches that table.
+
+Only a SHA-256 of each token is stored. The token itself is shown once, in the
+response to creating it. A token scoped away from an MCP gets the same 401 as
+an unknown token.
+
 ## Deploy
 
 `docker-compose.yml` is the **source of truth for the topology**; production is
@@ -341,6 +358,9 @@ Built to be internet-facing. The load-bearing pieces:
   with a valid token *is* the check having passed.
 - **Opaque tokens** — access tokens are introspected at Hydra per request; no
   JWT reaches a client, and tokens are revocable.
+- **Personal access tokens do not expire.** They are revocable from the
+  dashboard, which shows when each was last used, but one that leaks is good
+  until someone notices. Scope them to the MCPs the caller needs.
 - **Per-IP rate limiting** on the auth routes (forwarded-IP aware, since a
   reverse proxy fronts this).
 - **Credentials encrypted at rest** — per-user MCP keys are sealed with

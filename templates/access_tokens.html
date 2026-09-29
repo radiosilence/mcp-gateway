@@ -1,0 +1,56 @@
+{% import "controls.html" as ui %}
+{#- Rendered by the page and again, on its own, as the answer to creating or
+     revoking a token. A new token appears only in that answer. -#}
+    <section id="access-tokens" class="mt-6 rounded-2xl bg-white dark:bg-slate-900 shadow-sm ring-1 ring-slate-200 dark:ring-slate-800 p-6">
+      {%- if !access.notice.text.is_empty() %}
+      <p class="mb-3 text-xs {% if access.notice.bad %}text-amber-600 dark:text-amber-400{% else %}text-emerald-600 dark:text-emerald-400{% endif %}">{{ access.notice.text }}</p>
+      {%- endif %}
+      <h2 class="text-base font-semibold">Access tokens</h2>
+      <p class="mt-1.5 text-xs text-slate-500 dark:text-slate-400">For things that cannot sign in themselves, such as a scheduled job or a voice agent. Send one as <code class="font-mono">Authorization: Bearer …</code> to any MCP URL above; it acts as you until revoked.</p>
+
+      {% if !access.revealed.is_empty() %}
+      <div class="mt-4 flex items-center gap-2">
+        <code class="flex-1 rounded-md bg-slate-100 dark:bg-slate-800 px-3 py-2 font-mono text-xs ring-1 ring-inset ring-slate-200 dark:ring-slate-700 overflow-x-auto">{{ access.revealed }}</code>
+        <button type="button" data-copy="{{ access.revealed }}" class="copy shrink-0 rounded-md bg-slate-900 dark:bg-white px-3 py-2 text-xs font-medium text-white dark:text-slate-900 hover:opacity-90">Copy</button>
+      </div>
+      {% endif %}
+
+      {% if !access.tokens.is_empty() %}
+      <ul class="mt-4 divide-y divide-slate-200 dark:divide-slate-800">
+        {% for t in access.tokens %}
+        <li class="flex items-center justify-between gap-3 py-2.5">
+          <div class="min-w-0">
+            <p class="truncate text-sm font-medium">{{ t.name }}</p>
+            <p class="text-xs text-slate-500 dark:text-slate-400">{{ t.scope }} · created {{ t.created_ago }} · {{ t.last_used }}</p>
+          </div>
+          <form data-on:submit="confirm('Revoke {{ t.name }}? Anything using it stops working.') && @post('/dashboard/access-tokens/{{ t.id }}/revoke')">
+            <button class="rounded-lg px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 ring-1 ring-inset ring-red-300 dark:ring-red-800/60 hover:bg-red-50 dark:hover:bg-red-950/40">Revoke</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      <details class="mt-4 text-xs">
+        <summary class="cursor-pointer select-none text-slate-500 hover:text-slate-900 dark:hover:text-white">New token</summary>
+        <form data-on:submit="@post('/dashboard/access-tokens', {contentType: 'form'})" class="mt-2 space-y-3">
+          <label class="block">
+            <span class="text-slate-500 dark:text-slate-400">Name</span>
+            <input type="text" name="name" placeholder="morning call" maxlength="64" autocomplete="off" required
+                   class="{% call ui::field_control() %}{% endcall %}" />
+          </label>
+          <fieldset>
+            <legend class="text-slate-500 dark:text-slate-400">Limit to <span class="text-slate-400 dark:text-slate-500">(none ticked: every MCP)</span></legend>
+            <div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1.5">
+              {% for m in access.mcps %}
+              <label class="inline-flex items-center gap-1.5">
+                <input type="checkbox" name="mcp" value="{{ m.id }}" class="rounded" />
+                <span>{{ m.name }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </fieldset>
+          <button type="submit" class="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">Create</button>
+        </form>
+      </details>
+    </section>

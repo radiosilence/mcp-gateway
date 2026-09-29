@@ -15,6 +15,7 @@ use axum::response::{IntoResponse, Response, Sse};
 use futures_util::stream;
 
 use crate::config::Mcp;
+use crate::dashboard::access_tokens::AccessTokensView;
 use crate::dashboard::options::Verified;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -165,6 +166,7 @@ pub(super) struct McpView {
 pub(super) struct DashboardTemplate {
     pub(super) login: String,
     pub(super) mcps: Vec<McpView>,
+    pub(super) access: AccessTokensView,
 }
 
 /// The credential form posts one input per configured field, so the shape
@@ -522,6 +524,12 @@ mod tests {
             DashboardTemplate {
                 login: "somebody".into(),
                 mcps: Vec::new(),
+                access: AccessTokensView {
+                    tokens: Vec::new(),
+                    mcps: Vec::new(),
+                    revealed: String::new(),
+                    notice: Notice::none(),
+                },
             }
             .render()
             .unwrap()
@@ -544,6 +552,7 @@ mod tests {
 #[cfg(test)]
 mod preview {
     use super::*;
+    use crate::dashboard::access_tokens::{AccessTokenView, McpChoice};
 
     fn mcp(name: &str, id: &str) -> McpView {
         McpView {
@@ -629,9 +638,29 @@ mod preview {
                 ..mcp("TfL", "tfl")
             },
         ];
+        let access = AccessTokensView {
+            tokens: vec![AccessTokenView {
+                id: "x".into(),
+                name: "morning call".into(),
+                scope: "CalDAV, TfL".into(),
+                created_ago: "2 days ago".into(),
+                last_used: "used 3 hours ago".into(),
+            }],
+            mcps: ["Fastmail", "CalDAV", "Folk", "TfL"]
+                .map(|name| McpChoice {
+                    id: name.to_lowercase(),
+                    name: name.into(),
+                })
+                .into(),
+            revealed: "mgw_7Hq2xVb0cQ9dE1fR4tY6uI8oP3aS5dF7gH9jK1lZ2xC".into(),
+            notice: Notice::said(
+                "Created. Copy it now: it is not stored and will not be shown again.",
+            ),
+        };
         let html = DashboardTemplate {
             login: "radiosilence".into(),
             mcps,
+            access,
         }
         .render()
         .unwrap();

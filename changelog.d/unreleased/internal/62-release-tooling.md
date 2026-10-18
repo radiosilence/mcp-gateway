@@ -1,0 +1,1 @@
+- **Releases are cut from a release PR.** `just release` or the Release workflow bumps the crate, the Pulumi package and `APP_VERSION` together and turns `changelog.d/` fragments into the version's section, which becomes the GitHub release notes; CHANGELOG.md is generated and checked in CI.

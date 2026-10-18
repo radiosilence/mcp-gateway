@@ -1,9 +1,12 @@
 # Changelog
 
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
-versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## Unreleased
 
-## [0.9.2]
+### Internal
+
+- **Releases are cut from a release PR.** `just release` or the Release workflow bumps the crate, the Pulumi package and `APP_VERSION` together and turns `changelog.d/` fragments into the version's section, which becomes the GitHub release notes; CHANGELOG.md is generated and checked in CI.
+
+## 0.9.2
 
 ### Fixed
 
@@ -14,7 +17,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   document and never reached the authorization server. The gateway-wide
   document is still served for clients that look there.
 
-## [0.9.1]
+## 0.9.1
 
 ### Added
 
@@ -26,7 +29,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   NetworkPolicy; the gateway's backend policy selects only the pods it
   deploys.
 
-## [0.9.0]
+## 0.9.0
 
 ### Changed
 
@@ -68,7 +71,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
   The policy is otherwise unchanged, and is now shared verbatim with mariastew.
 
-## [0.8.6]
+## 0.8.6
 
 ### Changed
 
@@ -88,7 +91,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pending — the two states hardest to catch in the act, and the reason the
   loading field went so long looking like an empty one.
 
-## [0.8.5]
+## 0.8.5
 
 ### Changed
 
@@ -104,7 +107,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are stated separately because two `bg-*` utilities on one element is a coin
   toss — equal specificity, so whichever Tailwind emits last wins.
 
-## [0.8.4]
+## 0.8.4
 
 ### Added
 
@@ -117,7 +120,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   On the login page too, because that is the page in front of you when the
   dashboard is the thing that won't load.
 
-## [0.8.3]
+## 0.8.3
 
 ### Fixed
 
@@ -145,7 +148,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   open. That is what clearing `status_url` in `checked()` prevents, and there is
   a test on it.
 
-## [0.8.2]
+## 0.8.2
 
 ### Added
 
@@ -164,7 +167,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dynamically-provisioned volume then anchors Postgres wherever it first landed
   while Hydra stays free to drift away from it. Set it.
 
-## [0.8.1]
+## 0.8.1
 
 ### Fixed
 
@@ -176,7 +179,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   compiled — and CI checks what `npm pack` would actually ship rather than
   what the build left behind, which is the check that would have caught it.
 
-## [0.8.0]
+## 0.8.0
 
 ### Added
 
@@ -197,7 +200,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The chart publishes only after the image it pins is in the registry, for the
   same reason the GitHub release is cut last.
 
-## [0.7.1]
+## 0.7.1
 
 ### Changed
 
@@ -217,7 +220,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Registry-only: `fields` needed no gateway change, and `credential_header`
   remains for backends with a single secret.
 
-## [0.7.0]
+## 0.7.0
 
 This gateway stopped being Hydra's login provider and became an ordinary client
 of it. Read the whole entry before deploying: it does not start on the old
@@ -258,7 +261,9 @@ lost, which costs a retry — the rows are one-shot and expire in ten minutes
 anyway. Existing dashboard sessions are untouched: the `sessions` table did not
 change, and only how a session is created did.
 
-## [0.6.0] (2026-08-07)
+## 0.6.0
+
+Released 2026-08-07.
 
 Every dependency moved to its current release. Most of that is invisible, but
 two changes below alter runtime behaviour — read those before deploying.
@@ -288,7 +293,9 @@ two changes below alter runtime behaviour — read those before deploying.
 - `axum` 0.8.9, `tower-http` 0.6 → 0.7, `base64` 0.22 → 0.23, and the rest of
   the tree to current.
 
-## [0.5.4] (2026-07-26)
+## 0.5.4
+
+Released 2026-07-26.
 
 ### Changed
 
@@ -298,7 +305,9 @@ two changes below alter runtime behaviour — read those before deploying.
   I/O-bound — it proxies HTTP and talks to Postgres — and gains nothing
   measurable from that cost. Thin LTO with 16 codegen units instead.
 
-## [0.5.3] (2026-07-26)
+## 0.5.3
+
+Released 2026-07-26.
 
 ### Changed
 
@@ -319,7 +328,9 @@ two changes below alter runtime behaviour — read those before deploying.
   deliverable. Published tag scheme (`main`, `sha-<short>`, `vX.Y.Z`/`vX.Y`/
   `vX`, `latest`) is unchanged.
 
-## [0.5.2] - 2026-07-26
+## 0.5.2
+
+Released 2026-07-26.
 
 ### Fixed
 
@@ -344,7 +355,9 @@ two changes below alter runtime behaviour — read those before deploying.
 - A check that cannot be completed now says so in the log. It returned unknown
   silently, which is unhelpful precisely when something is wrong.
 
-## [0.5.1] - 2026-07-26
+## 0.5.1
+
+Released 2026-07-26.
 
 ### Fixed
 
@@ -352,7 +365,9 @@ two changes below alter runtime behaviour — read those before deploying.
   saying it was set stated the same thing twice. A password box looks identical
   either way, which is the case worth answering.
 
-## [0.5.0] - 2026-07-26
+## 0.5.0
+
+Released 2026-07-26.
 
 ### Added
 
@@ -372,7 +387,9 @@ two changes below alter runtime behaviour — read those before deploying.
 - **Fields say whether they hold anything.** A secret is never rendered back, so
   a set password and an empty one looked the same. They no longer do.
 
-## [0.4.1] - 2026-07-26
+## 0.4.1
+
+Released 2026-07-26.
 
 ### Fixed
 
@@ -394,7 +411,9 @@ two changes below alter runtime behaviour — read those before deploying.
 - **One definition of the status line.** The page rendered an empty one and a
   save replaced it, from two pieces of markup that had already drifted once.
 
-## [0.4.0] - 2026-07-26
+## 0.4.0
+
+Released 2026-07-26.
 
 ### Changed
 
@@ -425,7 +444,9 @@ two changes below alter runtime behaviour — read those before deploying.
   and its constructor, and the options fetching, with each module's tests beside
   the code they cover.
 
-## [0.3.1] - 2026-07-26
+## 0.3.1
+
+Released 2026-07-26.
 
 ### Added
 
@@ -440,7 +461,9 @@ two changes below alter runtime behaviour — read those before deploying.
   and a render that came up short reports how many of how many. Enough to tell
   a budget that is too tight from a backend that is simply slow.
 
-## [0.3.0] - 2026-07-26
+## 0.3.0
+
+Released 2026-07-26.
 
 ### Changed
 
@@ -471,7 +494,9 @@ two changes below alter runtime behaviour — read those before deploying.
   the question. The precise value stays on the element for anything that wants
   it, and there is no longer any script involved.
 
-## [0.2.1] - 2026-07-26
+## 0.2.1
+
+Released 2026-07-26.
 
 ### Fixed
 
@@ -488,7 +513,9 @@ two changes below alter runtime behaviour — read those before deploying.
   paint rather than from whenever the request starts, which is the gap it exists
   to cover.
 
-## [0.2.0] - 2026-07-26
+## 0.2.0
+
+Released 2026-07-26.
 
 ### Changed
 
@@ -523,7 +550,9 @@ two changes below alter runtime behaviour — read those before deploying.
   policy refuses, and quietly adding `unsafe-eval` to make one work would undo
   most of what it is for.
 
-## [0.1.2] - 2026-07-26
+## 0.1.2
+
+Released 2026-07-26.
 
 ### Security
 
@@ -543,7 +572,9 @@ two changes below alter runtime behaviour — read those before deploying.
   containing a quote could break out of it. Removing it also leaves no inline
   script on the page, which is what a strict Content-Security-Policy needs.
 
-## [0.1.1] - 2026-07-26
+## 0.1.1
+
+Released 2026-07-26.
 
 ### Fixed
 
@@ -565,7 +596,9 @@ two changes below alter runtime behaviour — read those before deploying.
   someone else's repository — the implementation reaching into an instance.
   Deployments now watch releases and decide when to move.
 
-## [0.1.0] - 2026-07-26
+## 0.1.0
+
+Released 2026-07-26.
 
 First release. The gateway ran unversioned until now, deployed by commit sha, so
 this entry describes the shape it arrived at rather than replaying how it got

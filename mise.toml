@@ -1,4 +1,7 @@
 [tools]
+rust = { version = "1", components = "rustfmt,clippy" }
+just = "latest"
+lefthook = "latest"
 # Deps for the dev tasks below. (If `cloudflared` doesn't resolve, use
 # "aqua:cloudflare/cloudflared".)
 cloudflared = "latest"

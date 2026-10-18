@@ -323,11 +323,14 @@ commit on main. Pin whichever you want to follow — a deployment wanting to kno
 what changed should be on an exact version and read
 [`CHANGELOG.md`](CHANGELOG.md).
 
-Releasing is a version bump: change `version` in `Cargo.toml`,
-`deploy/pulumi/package.json` and `APP_VERSION` — CI refuses a release where the
-three disagree — add the matching `CHANGELOG.md` entry, and merging cuts the
-semver image tags, publishes the chart and creates the GitHub release, in that
-order. There is no tag to push by hand.
+Every change adds a fragment under `changelog.d/unreleased/` rather than
+editing `CHANGELOG.md`, which is generated from them (`changelog.d/README.md`).
+`just release patch|minor|major`, or the Release workflow, opens a release PR
+that bumps `Cargo.toml`, `deploy/pulumi/package.json` and `APP_VERSION`
+together — CI refuses a release where the three disagree — and turns the
+fragments into the version's changelog section. Merging it cuts the semver
+image tags, publishes the chart and creates the GitHub release, in that order.
+There is no tag to push by hand.
 
 ## Security model
 

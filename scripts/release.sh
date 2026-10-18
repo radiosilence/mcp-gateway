@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Prepare a release PR: branch from origin/main, bump the version in
 # Cargo.toml, Cargo.lock and the Pulumi package, turn the unreleased changelog
-# fragments into the release, commit, push and open the PR. Never creates or pushes a tag:
-# merging the PR is what releases.
+# fragments into the release, commit, push and open the PR. Never creates or
+# pushes a tag: merging the PR is what releases.
 #
 #   scripts/release.sh X.Y.Z|patch|minor|major [--no-push]
 set -euo pipefail

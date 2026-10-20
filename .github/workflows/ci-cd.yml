@@ -98,9 +98,10 @@ jobs:
           # Whether this run releases, the one answer every release job reads.
           # A pull request: a release PR (branch `release-*`, or a version
           # change). A push: it changes the version and that version is not
-          # out yet; comparing with the latest release alone let a push landing
-          # while a release ran release it again. A manual run, which is how a
-          # failed release is retried: whatever version is not out yet.
+          # out yet, so a push landing while a release runs does not release
+          # it again. A manual run, which is how a failed release is retried:
+          # whatever version is not out yet. Whether a version is out is never
+          # guessed: an answer other than "not found" fails the run.
           version=$(version_of < Cargo.toml)
           bumped=false
           if [ "$(git show HEAD^1:Cargo.toml 2>/dev/null | version_of)" != "$version" ]; then
@@ -112,9 +113,13 @@ jobs:
               release=$bumped
               ;;
             *)
-              if { [ "$EVENT" = workflow_dispatch ] || [ "$bumped" = true ]; } \
-                && ! gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-                release=true
+              if [ "$EVENT" = workflow_dispatch ] || [ "$bumped" = true ]; then
+                if ! err=$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" 2>&1 > /dev/null); then
+                  case "$err" in
+                    *"release not found"*) release=true ;;
+                    *) echo "::error::cannot tell whether v$version is released: $err"; exit 1 ;;
+                  esac
+                fi
               fi
               ;;
           esac
@@ -191,9 +196,8 @@ jobs:
       - run: cargo fmt --all -- --check
 
   # Clippy and the tests on one runner, with one target directory and one
-  # cache: they share build scripts and proc-macros, which separate jobs each
-  # compiled. The tests run however clippy went, so one push reports every
-  # failure.
+  # cache, since they share build scripts and proc-macros. The tests run
+  # however clippy went, so one push reports every failure.
   rust:
     name: Rust
     runs-on: ubuntu-latest
@@ -430,6 +434,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: ${{ env.IMAGE }}:${{ github.sha }}
+          # Read by `container-main` to keep `main` from moving backwards.
+          labels: org.opencontainers.image.revision=${{ github.sha }}
 
   # The one status the ruleset requires. Skipped jobs are domains the change
   # does not touch and pass; anything failed or cancelled fails it.
@@ -476,8 +482,11 @@ jobs:
           echo "major=$major" >> "$GITHUB_OUTPUT"
           echo "major_minor=$major.$minor" >> "$GITHUB_OUTPUT"
 
-  # `main` and `sha-<short>` follow the last commit whose checks passed and
-  # that changed the image. Retagging needs no rebuild.
+  # `sha-<short>` names every commit whose checks passed and that changed the
+  # image; `main` follows the newest of them. Runs that may release are not
+  # serialised with the rest, so two can retag at once: `main` moves only
+  # when the commit it holds is an ancestor of this one. Retagging needs no
+  # rebuild.
   container-main:
     name: Container image (main)
     runs-on: ubuntu-latest
@@ -488,13 +497,29 @@ jobs:
       contents: read
       packages: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 100
       - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
       - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: docker buildx imagetools create -t "$IMAGE:main" -t "$IMAGE:sha-${GITHUB_SHA::7}" "$IMAGE:$GITHUB_SHA"
+      - run: |
+          tags=(-t "$IMAGE:sha-${GITHUB_SHA::7}")
+          current=$(docker buildx imagetools inspect "$IMAGE:main" --format '{{json .Image}}' 2>/dev/null \
+            | jq -r '[.[]][0].config.Labels["org.opencontainers.image.revision"] // empty' || true)
+          # Main's recent history, which holds any newer commit `main` was
+          # moved to. A commit not found in it is older, or predates the label.
+          git fetch -q --depth=100 origin main
+          if [ -n "$current" ] && git cat-file -e "$current^{commit}" 2>/dev/null \
+            && ! git merge-base --is-ancestor "$current" HEAD; then
+            echo "::notice::main holds $current, which is not an ancestor of this commit; leaving it there"
+          else
+            tags+=(-t "$IMAGE:main")
+          fi
+          docker buildx imagetools create "${tags[@]}" "$IMAGE:$GITHUB_SHA"
 
   # The image this commit already pushed, tagged with the release's version,
   # its moving minor and major, and `latest`, so a deployment can choose how

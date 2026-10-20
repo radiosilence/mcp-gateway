@@ -103,20 +103,20 @@ jobs:
             fi
           fi
           # Whether this run releases, the one answer every release job reads.
-          # A pull request: a release PR (branch `release-*`, or a version
-          # change). A push: it changes the version and that version is not
-          # out yet, so a push landing while a release runs does not release
-          # it again. A manual run, which is how a failed release is retried:
+          # A pull request: a release PR (branch `release-v*`, or a version
+          # change). A push: its own commit changes the version and that
+          # version is not out yet, so a push landing while a release runs
+          # does not release it again. A manual run, which is how a failed release is retried:
           # whatever version is not out yet. Only on main: a manual run on a
           # branch releases nothing.
           version=$(version_of < Cargo.toml)
           bumped=false
-          if [ "$(git show "${base:-HEAD^1}:Cargo.toml" 2>/dev/null | version_of)" != "$version" ]; then
+          if [ "$(git show HEAD^1:Cargo.toml 2>/dev/null | version_of)" != "$version" ]; then
             bumped=true
           fi
           case "$EVENT" in
             pull_request)
-              case "$HEAD_REF" in release-*) bumped=true ;; esac
+              case "$HEAD_REF" in release-v*) bumped=true ;; esac
               release=$bumped
               ;;
             *)
@@ -190,7 +190,7 @@ jobs:
           done | sort -u | while read -r id event sha; do
             [ "$id" = "$SELF" ] && continue
             if [ "$event" = push ]; then
-              files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha" --jq '.files[].filename' || echo Cargo.toml)
+              files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$sha" --jq '.files[].filename' || echo Cargo.toml)
               grep -qx Cargo.toml <<< "$files" && continue
             fi
             echo "cancelling run $id"
@@ -442,6 +442,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: ${{ env.IMAGE }}:${{ github.sha }}
+          # Read by `container-main` to keep `main` from moving backwards.
+          labels: org.opencontainers.image.revision=${{ github.sha }}
 
   # The one status the ruleset requires. Skipped jobs are domains the change
   # does not touch and pass; anything failed or cancelled fails it.
@@ -507,16 +509,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       # A release run is never cancelled and can finish after a later push's
-      # run: `main` moves only while this commit is still main's head.
+      # run, so `main` moves only forward: to this commit when it descends
+      # from the one the tag holds now, or when the tag carries no revision.
+      # Main's head is no guide, since a later push that builds no image
+      # moves it without retagging.
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tags=(-t "$IMAGE:sha-${GITHUB_SHA::7}")
-          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
-          if [ "$head" = "$GITHUB_SHA" ]; then
+          current=$(docker buildx imagetools inspect "$IMAGE:main" --format '{{json .Image}}' 2>/dev/null \
+            | jq -r '[.. | objects | .config.Labels?["org.opencontainers.image.revision"]? // empty][0] // empty' || true)
+          status=ahead
+          if [ -n "$current" ] && [ "$current" != "$GITHUB_SHA" ]; then
+            status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$current...$GITHUB_SHA" --jq .status)
+          fi
+          if [ "$status" = ahead ]; then
             tags+=(-t "$IMAGE:main")
           else
-            echo "::notice::main has moved on to $head; leaving the main tag"
+            echo "::notice::main holds $current, which this commit does not descend from ($status); leaving it"
           fi
           docker buildx imagetools create "${tags[@]}" "$IMAGE:$GITHUB_SHA"
 

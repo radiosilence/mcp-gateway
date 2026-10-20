@@ -1,5 +1,18 @@
 name: CI/CD
 
+# Two halves in one run, so the second can use what the first built.
+#
+# CI checks the change and ends in `Checks`, the one status the ruleset
+# requires. Each job runs only for the domains the change touches (see
+# `changes`); a skipped job passes `Checks`, a failed or cancelled one fails
+# it. Jobs can therefore be added, renamed or skipped without touching branch
+# protection.
+#
+# CD runs after `Checks` has passed on main. Every push that changes the image
+# moves `main` and `sha-<short>` onto the image CI pushed under the commit; a
+# push that changes the version also releases: the image's version tags, the
+# Pulumi package and the GitHub release, in that order. CD ships what CI
+# built: the static binaries (`build`) in the image `container` assembled.
 on:
   push:
     branches: [main]
@@ -9,81 +22,213 @@ on:
   # retried.
   workflow_dispatch:
 
-# A pull request's newer push cancels its older run. Runs on main are never
-# cancelled, since any of them may be publishing a release, and a manual run
-# is in a group of its own.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }} # radiosilence/mcp-gateway
+  IMAGE: ghcr.io/radiosilence/mcp-gateway
+
+# A pull request's newer push cancels its older run; on main, a newer push
+# cancels an older one that releases nothing.
+#
+# A run that may release is in a group of its own and is never cancelled, and
+# nor is a manual run, which is how a failed release is retried. The group is
+# chosen before any job runs, so it cannot ask `changes`. A push may release
+# when its head commit is titled `release: ` (as `just release` names its pull
+# request) or changes `Cargo.toml`: the second catches a version bump merged
+# under any other title, at the cost of also keeping a dependency change from
+# being cancelled.
+concurrency:
+  group: "ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.run_id) || (startsWith(github.event.head_commit.message, 'release: ') || contains(github.event.head_commit.modified, 'Cargo.toml')) && format('release-{0}', github.sha) || 'main' }}"
+  cancel-in-progress: "${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release: ') && !contains(github.event.head_commit.modified, 'Cargo.toml')) }}"
 
 jobs:
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+  # ── CI ──────────────────────────────────────────────────────────────────
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      web: ${{ steps.filter.outputs.web }}
+      package: ${{ steps.filter.outputs.package }}
+      docker: ${{ steps.filter.outputs.docker }}
+      release: ${{ steps.filter.outputs.release }}
+      version: ${{ steps.filter.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          GH_TOKEN: ${{ github.token }}
+        # The domains a change touches, from its diff. A pull request's is
+        # against its base. A push's is against the last commit on main whose
+        # run passed, so a push whose run was cancelled by the next one still
+        # reaches CD with it; without one in recent history, the commit
+        # before. A manual run, a release, or a diff that cannot be worked out
+        # runs everything.
+        #
+        # Allowlists, so the question is "did any source of this domain
+        # change?" rather than "was everything recognisably irrelevant?". The
+        # cost is that a new top-level directory of code is invisible here
+        # until it is added below. Markdown is documentation wherever it sits.
+        #
+        # Steps run under `bash -e`, where grep finding nothing is a failing
+        # command rather than an answer, so every question is asked in a
+        # condition.
+        run: |
+          rust=true web=true package=true docker=true release=false
+          version_of() { sed -n 's/^version = "\(.*\)"/\1/p' | head -1; }
+          base=HEAD^1
+          if [ "$EVENT" = "push" ]; then
+            passed=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci-cd.yml --branch main --event push \
+              --status success --limit 1 --json headSha --jq '.[0].headSha' 2>/dev/null || true)
+            if [ -n "$passed" ] && [ "$passed" != "$(git rev-parse HEAD)" ] && git fetch -q --deepen=100 origin main && git merge-base --is-ancestor "$passed" HEAD; then
+              base=$passed
+            fi
+          fi
+          # Whether this run releases, the one answer every release job reads.
+          # A pull request: a release PR (branch `release-*`, or a version
+          # change). A push: it changes the version and that version is not
+          # out yet; comparing with the latest release alone let a push landing
+          # while a release ran release it again. A manual run, which is how a
+          # failed release is retried: whatever version is not out yet.
+          version=$(version_of < Cargo.toml)
+          bumped=false
+          if [ "$(git show HEAD^1:Cargo.toml 2>/dev/null | version_of)" != "$version" ]; then
+            bumped=true
+          fi
+          case "$EVENT" in
+            pull_request)
+              case "$HEAD_REF" in release-*) bumped=true ;; esac
+              release=$bumped
+              ;;
+            *)
+              if { [ "$EVENT" = workflow_dispatch ] || [ "$bumped" = true ]; } \
+                && ! gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+                release=true
+              fi
+              ;;
+          esac
+          touches() { printf '%s\n' "$files" | grep -E "$1" | grep -qvE '\.md$'; }
+          if [ "$EVENT" != "workflow_dispatch" ] && [ "$release" = false ] && files=$(git diff --name-only "$base" HEAD); then
+            echo "changes since $(git rev-parse --short "$base"):"
+            printf '%s\n' "$files" | sed 's/^/  /'
+            # Anything cargo compiles or that decides how. The templates,
+            # stylesheet, scripts and migrations are compiled into the binary.
+            touches '^src/|^templates/|^assets/|^migrations/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^\.github/' || rust=false
+            # The committed stylesheet: its source, everything Tailwind reads
+            # class names from, and the pinned Tailwind CLI.
+            touches '^templates/|^assets/|^tailwind\.config\.js$|^mise\.toml$|^\.github/' || web=false
+            touches '^deploy/pulumi/|^\.github/' || package=false
+            # The image is the static binaries in a scratch layer. The Rust
+            # jobs already check the code, so a pull request builds them and
+            # the image only when the recipe or the dependencies changed (the
+            # musl build of a C dependency can break where the glibc one
+            # does not); main whenever what they contain did, since CD ships
+            # them.
+            if [ "$EVENT" = "pull_request" ] || [ "$rust" = false ]; then
+              touches '^Dockerfile$|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^\.github/' || docker=false
+            fi
+          fi
+          {
+            echo "rust=$rust"
+            echo "web=$web"
+            echo "package=$package"
+            echo "docker=$docker"
+            echo "release=$release"
+            echo "version=$version"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # A release cancels this repository's pull request runs, which are re-run
+  # from their page or by the next push, and main's earlier non-release runs,
+  # which a newer one supersedes, so its builds find the runners free. A job
+  # of its own, so only it holds a token that can cancel runs.
+  make-room:
+    name: Make room for the release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: changes
+    if: github.event_name != 'pull_request' && needs.changes.outputs.release == 'true'
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          SELF: ${{ github.run_id }}
+        run: |
+          for status in requested queued pending waiting in_progress; do
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow ci-cd.yml --status "$status" --limit 100 \
+              --json databaseId,event,headBranch,displayTitle \
+              --jq '.[] | select(.event == "pull_request" or (.event == "push" and .headBranch == "main" and (.displayTitle | startswith("release: ") | not))) | .databaseId'
+          done | sort -u | while read -r id; do
+            [ "$id" = "$SELF" ] && continue
+            echo "cancelling run $id"
+            gh run cancel "$id" --repo "$GITHUB_REPOSITORY" || true
+          done
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # No Rust cache: formatting compiles nothing.
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --all -- --check
 
-      - name: Cache dependencies
+  # Clippy and the tests on one runner, with one target directory and one
+  # cache: they share build scripts and proc-macros, which separate jobs each
+  # compiled. The tests run however clippy went, so one push reports every
+  # failure.
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    timeout-minutes: 45
+    concurrency:
+      group: rust-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - id: cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Run tests
+          shared-key: rust
+          # A failing check would otherwise leave the cache unsaved.
+          cache-on-failure: true
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test --locked --all-features
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
-        with:
-          toolchain: stable
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Lint with Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-  format:
-    name: Check Formatting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
-        with:
-          toolchain: stable
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
 
   # CHANGELOG.md is generated from changelog.d/ (scripts/changelog.py). A pull
   # request adds fragments without regenerating it, so only its fragments and
   # the released versions are checked; one that writes CHANGELOG.md, as a
-  # release does, must write exactly what the fragments make.
+  # release does, must write exactly what the fragments make. Every run: the
+  # fragments are Markdown, which no domain counts.
   changelog:
     name: Changelog
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,6 +249,9 @@ jobs:
   assets:
     name: Assets
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
@@ -117,16 +265,19 @@ jobs:
           }
 
   # The Pulumi component in deploy/pulumi. Typechecked and tested like the
-  # crate, and gating the publish below, so no chart is released that does not
+  # crate, and gating the publish, so no chart is released that does not
   # compile against the API it exports.
   chart:
     name: Chart
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.package == 'true'
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: deploy/pulumi
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -137,7 +288,8 @@ jobs:
 
       # One number for the gateway and the chart that deploys it, so a pin on
       # the package says exactly which gateway you get. Three files state it;
-      # this is what stops them drifting.
+      # this is what stops them drifting. A change to any of them is a
+      # release, and a release runs every job.
       - name: Check the chart agrees with the crate
         run: |
           crate=$(grep -m1 '^version = ' ../../Cargo.toml | sed 's/version = "\(.*\)"/\1/')
@@ -161,6 +313,7 @@ jobs:
       - name: Check the tarball carries the build
         run: |
           npm pack --dry-run --json > pack.json
+          # shellcheck disable=SC2016 # the script is JavaScript
           node -e '
             const files = require("./pack.json")[0].files.map((f) => f.path);
             const missing = ["dist/index.js", "dist/index.d.ts"].filter(
@@ -174,78 +327,32 @@ jobs:
             console.log(`${files.length} files, dist included`);
           '
 
-  check-version:
-    name: Check Version
-    runs-on: ubuntu-latest
-    outputs:
-      should_release: ${{ steps.check.outputs.should_release }}
-      version: ${{ steps.check.outputs.version }}
-      major: ${{ steps.check.outputs.major }}
-      major_minor: ${{ steps.check.outputs.major_minor }}
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          fetch-depth: 2
-
-      # A push releases only when it changes the version. Comparing with the
-      # latest GitHub release alone would let a push that lands while a release
-      # is still running release the same version a second time. A manual run
-      # releases whatever is unreleased.
-      - name: Check if version changed
-        id: check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          version_of() { sed -n 's/^version = "\(.*\)"/\1/p' | head -1; }
-          VERSION=$(version_of < Cargo.toml)
-          PREVIOUS=$(git show HEAD^:Cargo.toml 2>/dev/null | version_of || true)
-          LATEST=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
-          echo "Cargo.toml=$VERSION HEAD^=$PREVIOUS latest release=$LATEST"
-          if [ "$VERSION" = "${LATEST#v}" ]; then
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-          elif [ "$EVENT" = "workflow_dispatch" ] || [ "$VERSION" != "$PREVIOUS" ]; then
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          MAJOR=$(echo "$VERSION" | cut -d. -f1)
-          MINOR=$(echo "$VERSION" | cut -d. -f2)
-          echo "major=${MAJOR}" >> "$GITHUB_OUTPUT"
-          echo "major_minor=${MAJOR}.${MINOR}" >> "$GITHUB_OUTPUT"
-
-  # Compiles the musl binary and ships it straight into the image on the same
-  # runner. Kept in one job so the binary never round-trips through the
-  # artifact store, which would cost a runner handoff and drop its exec bit.
-  # Runs on PRs too — only the registry push is main-gated, via PUBLISH. This
-  # repo ships no binary artifacts, so nothing here is uploaded or attached to
-  # a release; the image is the only deliverable.
-  build-image:
-    name: Build ${{ matrix.arch }} Image
+  # The static binaries, in release, once: the image is built from them.
+  # Built on the runners, each on its own architecture, with the Rust cache.
+  build:
+    name: Build (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    needs: [check-version]
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    timeout-minutes: 45
+    concurrency:
+      group: build-${{ matrix.arch }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Pinned, so a runner image change is a change to this file. The
+          # binaries are static (musl), so the image's base has no libc to
+          # match.
           - arch: amd64
-            platform: linux/amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             target: x86_64-unknown-linux-musl
           - arch: arm64
-            platform: linux/arm64
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
-    permissions:
-      contents: read
-      packages: write
-    env:
-      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # musl-tools for the static target; cmake/clang for aws-lc-sys, the
       # rustls crypto backend, which is a C/C++ build.
@@ -254,107 +361,178 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends musl-tools musl-dev cmake clang
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          key: ${{ matrix.target }}
+          shared-key: ${{ matrix.target }}
           # Branch-scoped caches aren't readable from other branches, so a PR
-          # saving here only evicts the main entry every PR restores from — and
+          # saving here only evicts the main entry every PR restores from, and
           # a release target/ is the largest entry in the repository's 10GB.
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
 
-      - name: Build binary
-        run: cargo build --release --locked --target ${{ matrix.target }}
-
-      - name: Prepare binary
-        run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/mcp-gateway \
-            dist/mcp-gateway-linux-${{ matrix.arch }}-musl
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
-
-      - name: Log in to Container Registry
-        if: env.PUBLISH == 'true'
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+      # Tarred, because an artifact does not keep the executable bit. Named
+      # outside any release glob: a release attaches no binaries, the image
+      # is the deliverable.
+      - run: |
+          cargo build --release --locked --target ${{ matrix.target }}
+          tar czf mcp-gateway-linux-${{ matrix.arch }}-musl.tar.gz -C target/${{ matrix.target }}/release mcp-gateway
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          name: mcp-gateway-linux-${{ matrix.arch }}-musl
+          path: mcp-gateway-linux-${{ matrix.arch }}-musl.tar.gz
 
-      # On PRs this still builds — it just discards the result instead of
-      # pushing, so a broken Dockerfile fails before merge rather than after.
-      # No cache-from/cache-to: nothing compiles in the image.
-      - name: Build ${{ matrix.arch }}
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: ${{ matrix.platform }}
-          push: ${{ env.PUBLISH == 'true' }}
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-${{ matrix.arch }}
-
-  create-manifest:
-    name: Push Docker Image
+  # The binaries above in a scratch image, for both architectures. A pull
+  # request builds it to prove it builds. Main pushes it under the commit, in
+  # parallel with the checks: nothing deploys a commit tag, and CD moves
+  # `main`, and a release's version tags and `latest`, onto it only once
+  # `Checks` has passed. The image has no RUN step, so it needs no emulation
+  # and no layer cache.
+  container:
+    name: Container image
     runs-on: ubuntu-latest
-    needs: [test, lint, format, changelog, assets, build-image, check-version]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    timeout-minutes: 15
+    needs: [changes, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    concurrency:
+      group: container-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Log in to Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          registry: ${{ env.REGISTRY }}
+          pattern: mcp-gateway-linux-*
+      - run: |
+          for arch in amd64 arm64; do
+            mkdir -p "dist/$arch"
+            tar xzf "mcp-gateway-linux-$arch-musl/mcp-gateway-linux-$arch-musl.tar.gz" -C "dist/$arch"
+          done
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        if: github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: dist
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
 
-      - name: Compute tags
-        id: tags
-        run: echo "sha_tag=sha-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
-
-      - name: Create :main and :sha-<short> manifests
+  # The one status the ruleset requires. Skipped jobs are domains the change
+  # does not touch and pass; anything failed or cancelled fails it.
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [changes, fmt, rust, changelog, assets, chart, build, container]
+    if: always()
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          for tag in main "${{ steps.tags.outputs.sha_tag }}"; do
-            docker buildx imagetools create \
-              --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$tag \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-amd64 \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-arm64
-          done
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad=$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key')
+          if [ -n "$bad" ]; then
+            echo "::error::not passed: $(tr '\n' ' ' <<< "$bad")"
+            exit 1
+          fi
 
-      # Moving majors/minors as well as the exact version, so a deployment can
-      # choose how much it wants to follow.
-      - name: Create semver manifests
-        if: needs.check-version.outputs.should_release == 'true'
+  # ── CD ──────────────────────────────────────────────────────────────────
+  #
+  # Main only, after `Checks`. `checks` runs whatever its needs did, so every
+  # job here states the results it depends on rather than relying on the
+  # default, which would skip it whenever any job upstream was skipped.
+
+  check-version:
+    name: Check Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [changes, checks]
+    if: ${{ !cancelled() && needs.checks.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    outputs:
+      should_release: ${{ needs.changes.outputs.release }}
+      version: ${{ needs.changes.outputs.version }}
+      major: ${{ steps.parts.outputs.major }}
+      major_minor: ${{ steps.parts.outputs.major_minor }}
+    steps:
+      - id: parts
+        env:
+          VERSION: ${{ needs.changes.outputs.version }}
         run: |
-          for tag in "v${{ needs.check-version.outputs.version }}" "v${{ needs.check-version.outputs.major_minor }}" "v${{ needs.check-version.outputs.major }}" latest; do
-            docker buildx imagetools create \
-              --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$tag \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-amd64 \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-arm64
-          done
+          IFS=. read -r major minor _ <<< "$VERSION"
+          echo "major=$major" >> "$GITHUB_OUTPUT"
+          echo "major_minor=$major.$minor" >> "$GITHUB_OUTPUT"
 
-  # Last, and only once the image it names is actually in the registry. A
-  # release is a promise that something is pullable; cutting one beside the
-  # build breaks that promise every time a build fails.
-  # After create-manifest, for the reason create-release is: publishing the
-  # chart is a promise that the image it pins is pullable, and a chart that
-  # names an image nobody built is worse than no chart.
+  # `main` and `sha-<short>` follow the last commit whose checks passed and
+  # that changed the image. Retagging needs no rebuild.
+  container-main:
+    name: Container image (main)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [container, check-version]
+    if: ${{ !cancelled() && needs.container.result == 'success' && needs.check-version.result == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: docker buildx imagetools create -t "$IMAGE:main" -t "$IMAGE:sha-${GITHUB_SHA::7}" "$IMAGE:$GITHUB_SHA"
+
+  # The image this commit already pushed, tagged with the release's version,
+  # its moving minor and major, and `latest`, so a deployment can choose how
+  # much it follows. Retagging needs no rebuild, and repeats safely.
+  container-release:
+    name: Container image (release tags)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [check-version, container]
+    if: ${{ !cancelled() && needs.check-version.outputs.should_release == 'true' && needs.container.result == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+      MAJOR_MINOR: ${{ needs.check-version.outputs.major_minor }}
+      MAJOR: ${{ needs.check-version.outputs.major }}
+    steps:
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: |
+          docker buildx imagetools create \
+            -t "$IMAGE:v$VERSION" -t "$IMAGE:v$MAJOR_MINOR" -t "$IMAGE:v$MAJOR" -t "$IMAGE:latest" \
+            "$IMAGE:$GITHUB_SHA"
+
+  # After the image's version tag, which the package pins: publishing the
+  # chart is a promise that the image it names is pullable, and a package
+  # version cannot be reused.
   publish-chart:
     name: Publish Chart
     runs-on: ubuntu-latest
-    needs: [chart, check-version, create-manifest]
-    if: >-
-      github.ref == 'refs/heads/main' && github.event_name != 'pull_request' &&
-      needs.check-version.outputs.should_release == 'true'
+    timeout-minutes: 15
+    needs: [container-release]
+    if: ${{ !cancelled() && needs.container-release.result == 'success' }}
     permissions:
       contents: read
       packages: write
@@ -362,7 +540,7 @@ jobs:
       run:
         working-directory: deploy/pulumi
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -376,15 +554,18 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Last: jaritanet's updater treats a release as proof that the image and the
+  # package exist.
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [test, lint, format, changelog, assets, chart, check-version, create-manifest, publish-chart]
-    if: >-
-      github.ref == 'refs/heads/main' && github.event_name != 'pull_request' &&
-      needs.check-version.outputs.should_release == 'true'
+    timeout-minutes: 10
+    needs: [check-version, container-release, publish-chart]
+    # Every need having run, not merely not failed: a release without one of
+    # its parts is not a release.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') && needs.check-version.outputs.should_release == 'true' }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Release notes
         env:
           VERSION: ${{ needs.check-version.outputs.version }}

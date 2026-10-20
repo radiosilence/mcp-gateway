@@ -1,0 +1,1 @@
+- **One CI/CD pipeline gated by `Checks`.** CI jobs run only for the domains a change touches, and `Checks` is the one required status. The static binaries are built once on pinned runners and copied into the image, which CD retags rather than rebuilds; `main` and `sha-<short>` now move only on commits that change the image.

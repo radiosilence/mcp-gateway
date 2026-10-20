@@ -175,6 +175,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.release == 'true'
     permissions:
       actions: write
+      contents: read
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
@@ -510,18 +511,30 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       # A release run is never cancelled and can finish after a later push's
       # run, so `main` moves only forward: to this commit when it descends
-      # from the one the tag holds now, or when the tag carries no revision.
-      # Main's head is no guide, since a later push that builds no image
-      # moves it without retagging.
+      # from the one the tag holds now, or when there is no tag, no revision
+      # label, or the labelled commit no longer exists. Main's head is no
+      # guide, since a later push that builds no image moves it without
+      # retagging. Any other error fails the step rather than guess.
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tags=(-t "$IMAGE:sha-${GITHUB_SHA::7}")
-          current=$(docker buildx imagetools inspect "$IMAGE:main" --format '{{json .Image}}' 2>/dev/null \
-            | jq -r '[.. | objects | .config.Labels?["org.opencontainers.image.revision"]? // empty][0] // empty' || true)
+          current=
+          if image=$(docker buildx imagetools inspect "$IMAGE:main" --format '{{json .Image}}' 2>&1); then
+            current=$(jq -r '[.. | objects | .config.Labels?["org.opencontainers.image.revision"]? // empty][0] // empty' <<< "$image")
+          elif [[ "$image" != *": not found"* ]]; then
+            echo "::error::cannot read the image main holds: $image"
+            exit 1
+          fi
           status=ahead
           if [ -n "$current" ] && [ "$current" != "$GITHUB_SHA" ]; then
-            status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$current...$GITHUB_SHA" --jq .status)
+            if ! status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$current...$GITHUB_SHA" --jq .status 2>&1); then
+              if [[ "$status" != *"HTTP 404"* ]]; then
+                echo "::error::cannot compare $current with this commit: $status"
+                exit 1
+              fi
+              status=ahead
+            fi
           fi
           if [ "$status" = ahead ]; then
             tags+=(-t "$IMAGE:main")

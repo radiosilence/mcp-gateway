@@ -1,0 +1,1 @@
+- **Dependencies updated for RustSec advisories.** Fixes quinn-proto (RUSTSEC-2026-0338 to 0342), rustls (RUSTSEC-2026-0285/0346/0348/0349), rustls-webpki (RUSTSEC-2026-0382), webpki-root-certs (RUSTSEC-2026-0383) and webpki-roots (RUSTSEC-2026-0381).

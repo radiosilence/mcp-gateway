@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.5
+
+### Internal
+
+- **A release run is no longer cancelled while it waits to move the image tag.** A concurrency group holds one pending job and cancels it when another queues, so release runs now wait in a group of their own.
+
 ## 0.9.4
 
 ### Security

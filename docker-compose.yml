@@ -74,7 +74,11 @@ services:
 
   # The generic gateway: OAuth + credential vault + dashboard + routing.
   gateway:
-    build: .
+    # CI's build: the binary for this machine's architecture goes in
+    # dist/<amd64|arm64>/mcp-gateway first (see the Dockerfile).
+    build:
+      context: dist
+      dockerfile: ../Dockerfile
     env_file: .env
     environment:
       BIND_ADDR: 0.0.0.0:8080

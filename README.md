@@ -319,8 +319,9 @@ secrets from the backend, opaque tokens).
 
 Images are published to `ghcr.io/radiosilence/mcp-gateway`, tagged `vX.Y.Z`,
 `vX.Y`, `vX` and `latest` for a release, and `main` / `sha-<short>` for every
-commit on main. Pin whichever you want to follow — a deployment wanting to know
-what changed should be on an exact version and read
+commit on main that changes the image (the binary or the `Dockerfile`). Pin
+whichever you want to follow — a deployment wanting to know what changed should
+be on an exact version and read
 [`CHANGELOG.md`](CHANGELOG.md).
 
 Every change adds a fragment under `changelog.d/unreleased/` rather than

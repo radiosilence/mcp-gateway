@@ -25,3 +25,13 @@ mise run css # after changing a template; CI checks assets/app.css is current
 ```
 
 The Pulumi component is checked separately: `npm ci && npm run check` in `deploy/pulumi`.
+
+## CI/CD
+
+`.github/workflows/ci-cd.yml` is one workflow in two halves. CI ends in `Checks`, the only status the ruleset requires; CD runs after it on main, in the same run, and ships what CI built.
+
+The `changes` job decides from the diff which domains a change touches (`rust`, `web`, `package`, `docker`), and each CI job runs only for its domain, so a job skipping is expected: the change does not reach it. `Checks` passes when every job either passed or was skipped. Pull requests diff against their base; pushes to main against the last main commit whose run passed, and run everything when that commit cannot be found. A manual run, a release (a `release-*` branch or a version change) or a change under `.github/` runs everything. Markdown never counts.
+
+Each domain is an allowlist of paths in `changes`. To add one, add its output and its `touches` line there, gate the new jobs on it with a job-level `if:`, and add them to `Checks`' `needs`. A new top-level directory of code is invisible to CI until a domain lists it.
+
+The static binaries are built once per architecture (`build`), on pinned runners, and the image only copies them in (`container`, context `dist/`). Main pushes it as `:<sha>` during CI; CD moves `main` and `sha-<short>` onto it, and on a release the version tags.

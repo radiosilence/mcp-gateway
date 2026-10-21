@@ -1,5 +1,0 @@
-/target
-/cloudflared
-.env
-.git
-*.log

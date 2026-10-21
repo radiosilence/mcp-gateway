@@ -1,6 +1,7 @@
-# CI builds the static musl binary; this image only copies it in.
-# `docker build .` by hand requires dist/ to be populated first. That is
-# intended: docker builds only ever happen in CI.
+# CI builds the static musl binaries; this image only copies them in. The
+# build context is dist/, holding one binary per architecture as
+# dist/<amd64|arm64>/mcp-gateway, so a build by hand needs that populated
+# first. That is intended: docker builds only ever happen in CI.
 
 FROM scratch
 
@@ -20,7 +21,7 @@ ARG TARGETARCH
 COPY --from=gcr.io/distroless/static:latest \
      /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
-COPY dist/mcp-gateway-linux-${TARGETARCH}-musl /mcp-gateway
+COPY ${TARGETARCH}/mcp-gateway /mcp-gateway
 
 EXPOSE 8080
 ENV BIND_ADDR=0.0.0.0:8080

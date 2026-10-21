@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.4
+
+### Security
+
+- **Dependencies updated for RustSec advisories.** Fixes quinn-proto (RUSTSEC-2026-0338 to 0342), rustls (RUSTSEC-2026-0285/0346/0348/0349), rustls-webpki (RUSTSEC-2026-0382), webpki-root-certs (RUSTSEC-2026-0383) and webpki-roots (RUSTSEC-2026-0381).
+
+### Internal
+
+- **Release script recuts a stale branch.** `scripts/release.sh` deletes a release branch whose PR was closed or merged, locally and on origin, and cuts it again from origin/main; a branch with an open PR still stops it.
+- **One CI/CD pipeline gated by `Checks`.** CI jobs run only for the domains a change touches, and `Checks` is the one required status. The static binaries are built once on pinned runners and copied into the image, which CD retags rather than rebuilds; `main` and `sha-<short>` now move only on commits that change the image.
+
 ## 0.9.3
 
 ### Internal

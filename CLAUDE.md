@@ -19,7 +19,7 @@ An OAuth-fronted gateway for self-hosted MCP servers: it authenticates the user 
 ## Check
 
 ```sh
-just check   # fmt --check, clippy -D warnings, tests
+just check   # fmt --check, clippy -D warnings, tests, actionlint
 just fmt
 mise run css # after changing a template; CI checks assets/app.css is current
 ```

@@ -1,10 +1,11 @@
 # mcp-gateway — an OAuth-fronted gateway for self-hosted MCP servers
 
-# What CI checks: format, lint with warnings as errors, tests.
+# What CI checks: format, lint with warnings as errors, tests, the workflows.
 check:
     cargo fmt --all -- --check
     cargo clippy --all-targets --all-features -- -D warnings
     cargo test --locked --all-features
+    actionlint
 
 # Format
 fmt:

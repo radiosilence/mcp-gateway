@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.6
+
+### Security
+
+- Update tokio and other packages for security
+
+### Internal
+
+- **Workflows are linted.** The `Actionlint` job in `ci-cd.yml` runs actionlint, with shellcheck over every `run` script, on each change, and `just check` runs it locally.
+
 ## 0.9.5
 
 ### Internal

@@ -1,5 +1,6 @@
 export type { Deployed, OidcClient, Route } from "./contract.ts";
 export { Quantity, ResourcesSchema } from "./contract.ts";
+export type { HydraCallers } from "./mcp-gateway.ts";
 export { createMcpGateway, mcpRegistry } from "./mcp-gateway.ts";
 export { APP_VERSION, UNTRACKED, VERSIONS } from "./versions.ts";
 export {

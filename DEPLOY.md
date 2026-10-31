@@ -48,7 +48,10 @@ Everything else stays as in compose. The deltas:
   backends; the gateway never fronts Hydra. Backend MCP pods (fastmail-mcp, …)
   are internal — only the gateway reaches them. Connector URL: `https://mcp.blit.cc/<id>`.
 - **Hydra admin (:4445) is NOT exposed** — ClusterIP / internal only. Reachable
-  from the gateway pods, never from the ingress.
+  from the gateway pods and the login/consent provider, never from the ingress.
+  Not routing it is not enough: it authenticates no caller, so any pod that can
+  reach it can accept a login as anyone. Restrict it by NetworkPolicy, as the
+  Pulumi component does.
 - **Drop `--dev`**: run Hydra `serve all` (no `--dev`). Dev mode relaxes
   security and permits http/lax DCR — unsafe for prod. Configure real DCR policy
   and `SERVE_PUBLIC_CORS_ENABLED` as needed.

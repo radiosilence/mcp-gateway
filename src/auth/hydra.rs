@@ -25,6 +25,21 @@ pub struct HydraAdmin {
 struct Introspection {
     active: bool,
     sub: Option<String>,
+    client_id: Option<String>,
+}
+
+impl Introspection {
+    /// The person a live token acts for.
+    ///
+    /// A `client_credentials` token is issued to a client acting as itself, so
+    /// Hydra sets its subject to the client's own ID. Such a token stands for
+    /// no person and has no credentials behind it, and every client
+    /// registration is assumed hostile, so it is refused here rather than
+    /// relying on the issuer never granting that flow.
+    fn subject(self) -> Option<String> {
+        let sub = self.sub.filter(|_| self.active)?;
+        (self.client_id.as_deref() != Some(sub.as_str())).then_some(sub)
+    }
 }
 
 impl HydraAdmin {
@@ -35,7 +50,8 @@ impl HydraAdmin {
         }
     }
 
-    /// The subject a token belongs to, or `None` if it is not live.
+    /// The subject a token belongs to, or `None` if it is not live or acts for
+    /// no person.
     ///
     /// `None` and an error are deliberately different: a token the server says
     /// is inactive is a rejection, and a server that cannot be reached is not —
@@ -55,6 +71,42 @@ impl HydraAdmin {
             .await
             .context("Hydra's introspection response was not JSON")?;
 
-        Ok(introspection.active.then_some(introspection.sub).flatten())
+        Ok(introspection.subject())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn subject(json: &str) -> Option<String> {
+        serde_json::from_str::<Introspection>(json)
+            .unwrap()
+            .subject()
+    }
+
+    #[test]
+    fn a_live_user_token_yields_its_subject() {
+        assert_eq!(
+            subject(r#"{"active":true,"sub":"github:1","client_id":"claude"}"#).as_deref(),
+            Some("github:1")
+        );
+    }
+
+    #[test]
+    fn an_inactive_token_yields_nothing() {
+        assert_eq!(
+            subject(r#"{"active":false,"sub":"github:1","client_id":"claude"}"#),
+            None
+        );
+        assert_eq!(subject(r#"{"active":false}"#), None);
+    }
+
+    #[test]
+    fn a_client_credentials_token_yields_nothing() {
+        assert_eq!(
+            subject(r#"{"active":true,"sub":"claude","client_id":"claude"}"#),
+            None
+        );
     }
 }

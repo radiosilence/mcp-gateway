@@ -197,7 +197,10 @@ impl Store {
 
         let values = match merge(stored.as_ref()) {
             Ok(values) => values,
-            Err(e) => return Ok(Err(e)),
+            Err(e) => {
+                tx.rollback().await?;
+                return Ok(Err(e));
+            }
         };
         let sealed = self.cipher.seal(&encode_secret(&values))?;
         sqlx::query(

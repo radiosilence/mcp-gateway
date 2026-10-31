@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0
+
+### Security
+
+- **Tokens issued to other relying parties are refused.** A token is accepted only when its client is registered with the gateway's `PUBLIC_URL` as an audience, so an access token Hydra issued to another service of the same issuer can no longer reach a backend with the user's stored credentials. A token that names no client is refused as well. Clients registered before this release must have `PUBLIC_URL` added to their `audience`, or their tokens are refused.
+
 ## 0.10.0
 
 ### Security

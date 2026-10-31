@@ -75,20 +75,41 @@ async fn graphql_over_mcp(
     variables: Option<Value>,
 ) -> Result<Value> {
     let session = initialize(state, mcp, credentials).await?;
+    call_tool(state, mcp, credentials, session.id(), query, variables).await
+}
 
-    let result = call_tool(state, mcp, credentials, &session, query, variables).await;
+/// A backend session, ended when this is dropped.
+///
+/// The backend keeps session state until told otherwise. Ending it on drop
+/// rather than after the call covers every way out: an error part way through
+/// the handshake, and the dashboard request being cancelled because the
+/// browser went away, which drops this future wherever it was waiting. The
+/// teardown runs as its own task so nobody waits for it.
+struct Session {
+    id: Option<String>,
+    http: reqwest::Client,
+    url: String,
+}
 
-    // The backend keeps session state until told otherwise; drop it even if the
-    // call failed, so a dashboard refresh loop can't pile sessions up.
-    if let Some(id) = &session {
-        let _ = state
-            .http
-            .delete(&mcp.backend)
-            .header(SESSION_HEADER, id)
-            .send()
-            .await;
+impl Session {
+    fn id(&self) -> Option<&str> {
+        self.id.as_deref()
     }
-    result
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        let Some(id) = self.id.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let request = self.http.delete(&self.url).header(SESSION_HEADER, id);
+        runtime.spawn(async move {
+            let _ = request.send().await;
+        });
+    }
 }
 
 /// Attach the user's credentials as the headers this MCP declares. The backend
@@ -125,12 +146,8 @@ fn request(
     req
 }
 
-/// Handshake, returning the session id the backend assigned (if any).
-async fn initialize(
-    state: &AppState,
-    mcp: &Mcp,
-    credentials: &CredentialSet,
-) -> Result<Option<String>> {
+/// Handshake, returning the session the backend assigned (if any).
+async fn initialize(state: &AppState, mcp: &Mcp, credentials: &CredentialSet) -> Result<Session> {
     let response = request(state, mcp, credentials, None)
         .json(&json!({
             "jsonrpc": "2.0",
@@ -149,11 +166,16 @@ async fn initialize(
         .await
         .context("backend unreachable")?;
 
-    let session = response
-        .headers()
-        .get(SESSION_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string);
+    // Held from here, so every early return below still ends the session.
+    let session = Session {
+        id: response
+            .headers()
+            .get(SESSION_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string),
+        http: state.http.clone(),
+        url: mcp.backend.clone(),
+    };
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
@@ -162,7 +184,7 @@ async fn initialize(
     rpc_result(&body)?;
 
     // Servers may refuse requests until this notification arrives.
-    let _ = request(state, mcp, credentials, session.as_deref())
+    let _ = request(state, mcp, credentials, session.id())
         .json(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
         .send()
         .await;
@@ -174,7 +196,7 @@ async fn call_tool(
     state: &AppState,
     mcp: &Mcp,
     credentials: &CredentialSet,
-    session: &Option<String>,
+    session: Option<&str>,
     query: &str,
     variables: Option<Value>,
 ) -> Result<Value> {
@@ -183,7 +205,7 @@ async fn call_tool(
     if let Some(variables) = variables {
         arguments["variables"] = Value::String(variables.to_string());
     }
-    let response = request(state, mcp, credentials, session.as_deref())
+    let response = request(state, mcp, credentials, session)
         .json(&json!({
             "jsonrpc": "2.0",
             "id": 2,
@@ -284,6 +306,29 @@ mod tests {
     fn surfaces_the_json_rpc_error_message() {
         let body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"no session"}}"#;
         assert_eq!(rpc_result(body).unwrap_err().to_string(), "no session");
+    }
+
+    /// Dropping the session wherever the future stopped must still end it at
+    /// the backend.
+    #[tokio::test]
+    async fn dropping_a_session_ends_it_at_the_backend() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        drop(Session {
+            id: Some("abc".into()),
+            http: reqwest::Client::new(),
+            url,
+        });
+
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0; 1024];
+        let n = socket.read(&mut buf).await.unwrap();
+        let request = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+        let _ = socket.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").await;
+        assert!(request.starts_with("delete /mcp "), "{request}");
+        assert!(request.contains("mcp-session-id: abc"), "{request}");
     }
 
     #[test]

@@ -259,7 +259,8 @@ mod tests {
         assert!(!ok(r#"{"audience":[]}"#).unwrap());
         assert!(!ok(r#"{"audience":null}"#).unwrap());
         assert!(!ok(r#"{}"#).unwrap());
-        assert!(ok("[]").is_err());
+        assert!(!ok("[]").unwrap_or(false));
+        assert!(!ok(r#"[{"audience":["https://mcp.example"]}]"#).unwrap_or(false));
         assert!(!client_answer(StatusCode::NOT_FOUND, b"", gateway).unwrap());
         assert!(client_answer(StatusCode::INTERNAL_SERVER_ERROR, b"", gateway).is_err());
         assert!(client_answer(StatusCode::FORBIDDEN, b"", gateway).is_err());

@@ -46,7 +46,7 @@ pub async fn handle(
         Ok(Some(sub)) => sub,
         Ok(None) => return challenge(&state, &id),
         Err(e) => {
-            tracing::debug!(error = %e, "introspection failed");
+            tracing::warn!(error = format!("{e:#}"), "token check failed");
             return challenge(&state, &id);
         }
     };

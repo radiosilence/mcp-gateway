@@ -91,7 +91,7 @@ pub async fn set_credential(
                     values.insert(field.id.clone(), value);
                 }
             }
-            Ok(values)
+            Ok::<_, String>(values)
         })
         .await
         .map_err(AppError::Internal)?;
@@ -269,7 +269,7 @@ pub async fn set_field(
                 true => values.remove(&field_id),
                 false => values.insert(field_id.clone(), value.to_string()),
             };
-            Ok(values)
+            Ok::<_, AppError>(values)
         })
         .await
         .map_err(AppError::Internal)??;

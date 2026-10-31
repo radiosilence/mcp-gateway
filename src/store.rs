@@ -220,6 +220,18 @@ impl Store {
         Ok(())
     }
 
+    /// Remove sessions and login flows past their expiry. Lookups already
+    /// ignore them; this is only so the tables do not grow forever.
+    pub async fn delete_expired(&self) -> Result<()> {
+        sqlx::query("DELETE FROM sessions WHERE expires_at <= now()")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM oauth_flows WHERE expires_at <= now()")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     // ---- Transient OAuth flow state (one-shot) ----
 
     pub async fn create_oauth_flow(

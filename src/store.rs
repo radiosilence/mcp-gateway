@@ -127,16 +127,35 @@ impl Store {
         mcp_id: &str,
         primary_field: &str,
     ) -> Result<Option<CredentialSet>> {
-        let row = sqlx::query("SELECT enc_secret FROM credentials WHERE sub = $1 AND mcp_id = $2")
-            .bind(sub)
-            .bind(mcp_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        Ok(self
+            .get_credentials_with_meta(sub, mcp_id, primary_field)
+            .await?
+            .map(|(values, _)| values))
+    }
+
+    /// [`Self::get_credentials`] along with when they were last saved, in the
+    /// one query the dashboard needs for each MCP it shows.
+    pub async fn get_credentials_with_meta(
+        &self,
+        sub: &str,
+        mcp_id: &str,
+        primary_field: &str,
+    ) -> Result<Option<(CredentialSet, TokenMeta)>> {
+        let row = sqlx::query(
+            "SELECT enc_secret, updated_at FROM credentials WHERE sub = $1 AND mcp_id = $2",
+        )
+        .bind(sub)
+        .bind(mcp_id)
+        .fetch_optional(&self.pool)
+        .await?;
         match row {
             Some(row) => {
                 let sealed: String = row.get("enc_secret");
                 let plain = self.cipher.open(&sealed)?;
-                Ok(Some(decode_secret(&plain, primary_field)))
+                let meta = TokenMeta {
+                    updated_at: row.get("updated_at"),
+                };
+                Ok(Some((decode_secret(&plain, primary_field), meta)))
             }
             None => Ok(None),
         }
@@ -171,18 +190,6 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
-    }
-
-    /// Non-secret metadata for the dashboard (is a credential set, and when).
-    pub async fn credential_meta(&self, sub: &str, mcp_id: &str) -> Result<Option<TokenMeta>> {
-        let row = sqlx::query("SELECT updated_at FROM credentials WHERE sub = $1 AND mcp_id = $2")
-            .bind(sub)
-            .bind(mcp_id)
-            .fetch_optional(&self.pool)
-            .await?;
-        Ok(row.map(|row| TokenMeta {
-            updated_at: row.get("updated_at"),
-        }))
     }
 
     // ---- Dashboard sessions (opaque id → server-side state) ----

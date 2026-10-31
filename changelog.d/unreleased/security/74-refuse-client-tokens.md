@@ -1,0 +1,1 @@
+- **Tokens that act for no person are refused.** The proxy treats a token whose subject is its own client ID, as Hydra issues for `client_credentials`, as unauthenticated, so a gap in client registration or grant policy cannot reach a backend.

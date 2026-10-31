@@ -353,8 +353,9 @@ Built to be internet-facing. The load-bearing pieces:
   self-registered client that way; first-party clients of other services have
   no audience and are refused. The decision is on the client rather than on the
   token's own audience because Hydra copies a token's audience through every
-  refresh, so a token-side check would refuse every grant made before it, and
-  the client's registration is cached for five minutes.
+  refresh, so a token-side check would refuse every grant made before it. A
+  client's registration is cached for five minutes, so removing the audience
+  takes effect within that.
 - **Per-IP rate limiting** on the auth routes (forwarded-IP aware, since a
   reverse proxy fronts this).
 - **Credentials encrypted at rest** — per-user MCP keys are sealed with

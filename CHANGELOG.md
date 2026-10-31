@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.0
+
+### Security
+
+- **Hydra admits only named callers.** A NetworkPolicy restricts Hydra's admin port to the gateway and `hydraCallers.admin`, and its public port to the gateway and `hydraCallers.public`; previously any pod could reach the unauthenticated admin API and accept a login as anyone. `createMcpGateway` now requires `hydraCallers`, and an empty label set in it throws. Hydra's readiness probe now runs over loopback inside the pod, so it does not depend on how the CNI treats node-originated traffic. The inert `SERVE_TLS_ALLOW_TERMINATION_FROM=0.0.0.0/0` is removed, since Hydra reads it only when it terminates TLS itself.
+- **Only access tokens acting for a person are accepted.** The proxy refuses refresh tokens presented as bearer tokens, which Hydra's introspection reports as active and which would otherwise have stood in for an access token for their whole lifetime, and tokens whose subject is their own client ID, as Hydra issues for `client_credentials`. Both refusals are logged as warnings. Public MCPs refuse these tokens too, where they previously accepted any live token.
+- **Credential writes no longer lose concurrent changes, and cookies stay out of the proxy.** Saving the credential form and the calendar picker at the same moment could drop one side's field, because each rewrote the whole set from its own read; the row is now locked for the read and write. Injected credential headers are marked sensitive so they are redacted from debug output and kept out of HTTP/2 compression tables, the gateway's session cookie is no longer forwarded to backends, and a backend's `Set-Cookie` is no longer relayed onto the gateway's origin.
+
+### Fixed
+
+- **Expired sessions, abandoned logins and backend MCP sessions no longer accumulate.** Expired rows are swept hourly and `/login` shares the callback's rate limit, since it writes a row for anyone who asks. Sessions the dashboard opens on a backend are ended on every exit path, including a failed handshake and a cancelled request. Each dashboard section also reads its credentials in one query rather than two.
+- **Proxied MCP streams are no longer cut at 15 seconds.** The proxy shared the 15-second client used for one-shot calls, and that timeout covers the response body, so SSE streams and slow tool calls were dropped mid-response. It now has its own client with a connect timeout and a five-minute idle timeout per read.
+- **SIGTERM stops the gateway.** It runs as PID 1 with no handler, which the kernel treats as ignoring the signal, so every stop waited for SIGKILL. It now drains for five seconds and exits; open SSE streams are closed rather than waited on, since they never finish by themselves.
+
 ## 0.9.6
 
 ### Security

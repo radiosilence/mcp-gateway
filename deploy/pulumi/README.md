@@ -22,9 +22,23 @@ const { routes, oidc } = createMcpGateway(
     authHostname: "auth.example.com",
     oidcClientId: "mcp-gateway",
     oidcClientSecret: someSecret,
+    hydraCallers: {
+      admin: [{ app: "auth" }],
+      public: [{ "app.kubernetes.io/name": "traefik" }],
+    },
   },
 );
 ```
+
+## Who may reach Hydra
+
+Hydra's admin API authenticates nobody: a pod that can reach it can accept a
+login as any user or register a client. A NetworkPolicy therefore admits only
+the pods named in `hydraCallers`, which must be in the same namespace. `admin`
+is the login and consent provider Hydra delegates to (the gateway admits itself);
+`public` is the ingress and any relying party that exchanges codes with Hydra
+directly. The callers are arguments because their labels belong to the
+deployment, and a caller left out loses sign-in rather than failing a preview.
 
 ## What it does not do
 

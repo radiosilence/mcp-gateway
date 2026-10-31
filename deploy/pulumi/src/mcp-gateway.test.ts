@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as yaml from "yaml";
 import { McpSchema } from "./mcp-gateway.schemas.ts";
-import { mcpRegistry } from "./mcp-gateway.ts";
+import { hydraIngress, mcpRegistry } from "./mcp-gateway.ts";
 
 /**
  * The registry is the contract with the gateway: it is parsed at boot, and a
@@ -88,5 +88,35 @@ describe("mcpRegistry", () => {
       backend: "http://mcp-gateway-mcp-folk.ns.svc.cluster.local:8080/mcp",
       public: true,
     });
+  });
+});
+
+describe("hydraIngress", () => {
+  const traefik = { "app.kubernetes.io/name": "traefik" };
+
+  it("admits only the gateway and named callers to each port", () => {
+    expect(
+      hydraIngress({ admin: [{ app: "auth" }], public: [traefik] }),
+    ).toEqual([
+      {
+        from: [
+          { podSelector: { matchLabels: { app: "mcp-gateway" } } },
+          { podSelector: { matchLabels: { app: "auth" } } },
+        ],
+        ports: [{ protocol: "TCP", port: 4445 }],
+      },
+      {
+        from: [{ podSelector: { matchLabels: traefik } }],
+        ports: [{ protocol: "TCP", port: 4444 }],
+      },
+    ]);
+  });
+
+  // An empty `from` admits every source, which would open the port it was
+  // meant to close.
+  it("never emits a rule with an empty `from`", () => {
+    const rules = hydraIngress({ admin: [], public: [] });
+    expect(rules).toHaveLength(1);
+    for (const rule of rules) expect(rule.from.length).toBeGreaterThan(0);
   });
 });

@@ -73,6 +73,32 @@ export function mcpRegistry(
   );
 }
 
+type Labels = Record<string, string>;
+export type HydraCallers = { admin: Labels[]; public: Labels[] };
+
+/**
+ * Hydra's ingress rules: the admin port to this gateway and the named admin
+ * callers, the public port to the named public callers.
+ *
+ * A rule whose `from` is empty admits every source, so an empty `public` list
+ * drops that rule rather than emitting one: the port is then closed, which
+ * fails loudly at sign-in instead of opening Hydra to the cluster.
+ */
+export function hydraIngress(callers: HydraCallers) {
+  const from = (labels: Labels[]) =>
+    labels.map((matchLabels) => ({ podSelector: { matchLabels } }));
+  const port = (n: number) => [{ protocol: "TCP", port: n }];
+  return [
+    {
+      from: from([{ app: "mcp-gateway" }, ...callers.admin]),
+      ports: port(4445),
+    },
+    ...(callers.public.length
+      ? [{ from: from(callers.public), ports: port(4444) }]
+      : []),
+  ];
+}
+
 /**
  * The MCP Gateway stack: an OAuth-fronted gateway for self-hosted MCP servers.
  *
@@ -121,6 +147,18 @@ export function createMcpGateway(
      * gateway's to name.
      */
     authHostname: string;
+    /**
+     * Pods in this namespace that call Hydra directly, as label sets; every
+     * other pod is refused at both of its ports.
+     *
+     * `admin` answers without authenticating its caller and can accept a login
+     * as anyone, so it names the identity provider answering Hydra's
+     * challenges and nothing else. This gateway is admitted to it here.
+     * `public` names the ingress, and any relying party that exchanges codes
+     * in-cluster rather than through it. Leaving a caller out breaks sign-in
+     * for whatever it serves.
+     */
+    hydraCallers: HydraCallers;
   },
 ) {
   const conf = McpGatewayConfSchema.parse(confArgs);
@@ -356,12 +394,10 @@ export function createMcpGateway(
                     value: `https://${secrets.authHostname}/register`,
                   },
                   { name: "SERVE_COOKIES_SAME_SITE_MODE", value: "Lax" },
-                  // Traefik terminates TLS and forwards http in-cluster; trust
-                  // it so Hydra treats the connection as secure (no --dev).
-                  {
-                    name: "SERVE_TLS_ALLOW_TERMINATION_FROM",
-                    value: "0.0.0.0/0",
-                  },
+                  // No `SERVE_TLS_ALLOW_TERMINATION_FROM`: Hydra consults it
+                  // only when `serve.tls.enabled` is set, and here the ingress
+                  // terminates TLS and Hydra serves plain HTTP. Secure cookies
+                  // and the https issuer follow from running without --dev.
                   { name: "OAUTH2_EXPOSE_INTERNAL_ERRORS", value: "false" },
                 ],
                 ports: [
@@ -563,6 +599,22 @@ export function createMcpGateway(
             ports: [{ protocol: "TCP", port: 5432 }],
           },
         ],
+      },
+    },
+    opts,
+  );
+
+  // Hydra's admin API authenticates nobody, so which pods can reach it is the
+  // whole of its access control. The kubelet's readiness probe comes from the
+  // node rather than a pod, and the CNI admits that to local pods regardless.
+  new k8s.networking.v1.NetworkPolicy(
+    "mcp-gateway-hydra-netpol",
+    {
+      metadata: { name: "mcp-gateway-hydra", namespace },
+      spec: {
+        podSelector: { matchLabels: { app: "mcp-gateway-hydra" } },
+        policyTypes: ["Ingress"],
+        ingress: hydraIngress(secrets.hydraCallers),
       },
     },
     opts,

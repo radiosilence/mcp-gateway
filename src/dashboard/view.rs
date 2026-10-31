@@ -185,15 +185,12 @@ impl McpView {
         // secrets are never decrypted for rendering. Fetched whenever anything
         // is stored, not only when a visible field wants prefilling: a secret
         // needs it too, to say that it is set.
-        let (stored, meta) = match state
+        let (stored, meta) = state
             .store
             .get_credentials_with_meta(&session.sub, &m.id, m.primary_field())
             .await
             .map_err(AppError::Internal)?
-        {
-            Some((values, meta)) => (Some(values), Some(meta)),
-            None => (None, None),
-        };
+            .unzip();
         // A public MCP is connected the moment the user has logged in — there
         // is nothing to store, so nothing to wait for.
         let (has_credential, updated_at, updated_ago) = match (m.is_public(), meta) {

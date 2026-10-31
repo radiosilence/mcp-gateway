@@ -142,7 +142,8 @@ async fn main() -> Result<()> {
     let mut config = Config::from_env()?;
     let bind_addr = config.bind_addr.clone();
 
-    // The cipher holds the key from here on; no second copy stays in config.
+    // Config is cloned into every handler's state and the cipher is all that
+    // needs the key, so it is not kept there. The freed buffer is not wiped.
     let cipher = Cipher::new(&std::mem::take(&mut config.token_enc_key))?;
     let store = Store::connect(&config.database_url, cipher).await?;
     store.migrate().await?;
@@ -155,12 +156,16 @@ async fn main() -> Result<()> {
     // reqwest's total timeout covers the body as well, so it cannot be used
     // here. The read timeout resets on every chunk: a stream carrying traffic
     // lives as long as it likes, an idle notification stream is closed and the
-    // client reconnects, and a backend that accepts and never answers no
-    // longer holds the request open indefinitely. It is long because a tool
-    // call answered as plain JSON sends nothing until it has finished.
+    // client reconnects, and a backend that accepts and never answers is
+    // bounded. It is long because a tool call answered as plain JSON sends
+    // nothing until it has finished.
+    //
+    // Redirects are relayed to the client rather than followed: following one
+    // would send the injected credentials to whichever host it names.
     let proxy_http = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(300))
+        .redirect(reqwest::redirect::Policy::none())
         .build()?;
 
     let hydra = HydraAdmin::new(&config.hydra_admin_url, http.clone());
@@ -299,7 +304,7 @@ async fn shutdown_signal() {
         }
     };
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
+        Ok(()) = tokio::signal::ctrl_c() => {}
         _ = terminate => {}
     }
     tracing::info!("shutting down");

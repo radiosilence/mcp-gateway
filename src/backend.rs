@@ -87,8 +87,9 @@ async fn graphql_over_mcp(
 /// teardown runs as its own task so nobody waits for it.
 struct Session {
     id: Option<String>,
-    http: reqwest::Client,
-    url: String,
+    /// The DELETE that ends it, carrying the same credentials as every other
+    /// request: a backend that authenticates each request refuses a bare one.
+    teardown: Option<reqwest::RequestBuilder>,
 }
 
 impl Session {
@@ -99,13 +100,12 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        let Some(id) = self.id.take() else {
+        let Some(request) = self.teardown.take() else {
             return;
         };
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        let request = self.http.delete(&self.url).header(SESSION_HEADER, id);
         runtime.spawn(async move {
             let _ = request.send().await;
         });
@@ -168,14 +168,17 @@ async fn initialize(state: &AppState, mcp: &Mcp, credentials: &CredentialSet) ->
         .context("backend unreachable")?;
 
     // Held from here, so every early return below still ends the session.
+    let id = response
+        .headers()
+        .get(SESSION_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
     let session = Session {
-        id: response
-            .headers()
-            .get(SESSION_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string),
-        http: state.http.clone(),
-        url: mcp.backend.clone(),
+        teardown: id.as_ref().map(|id| {
+            credentialed(state.http.delete(&mcp.backend), mcp, credentials)
+                .header(SESSION_HEADER, id)
+        }),
+        id,
     };
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
@@ -319,8 +322,11 @@ mod tests {
         let url = format!("http://{}/mcp", listener.local_addr().unwrap());
         drop(Session {
             id: Some("abc".into()),
-            http: reqwest::Client::new(),
-            url,
+            teardown: Some(
+                reqwest::Client::new()
+                    .delete(url)
+                    .header(SESSION_HEADER, "abc"),
+            ),
         });
 
         let (mut socket, _) = listener.accept().await.unwrap();

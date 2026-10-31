@@ -56,6 +56,10 @@ pub async fn handle(
     headers.remove(header::AUTHORIZATION);
     headers.remove(header::HOST);
     headers.remove(header::CONTENT_LENGTH);
+    // The gateway's own session cookie would otherwise reach every backend,
+    // and a backend's Set-Cookie would land on the gateway's origin. MCP
+    // sessions travel in `mcp-session-id`, so neither needs to cross.
+    headers.remove(header::COOKIE);
     for field in &mcp.fields {
         headers.remove(field.header.as_str());
     }
@@ -93,7 +97,12 @@ pub async fn handle(
                 // user input, so a bad one is skipped rather than failing the
                 // whole request with a confusing transport error.
                 match header::HeaderValue::from_str(value) {
-                    Ok(v) => req = req.header(field.header.as_str(), v),
+                    Ok(mut v) => {
+                        // Redacted from Debug output and never added to an
+                        // HTTP/2 header compression table.
+                        v.set_sensitive(true);
+                        req = req.header(field.header.as_str(), v);
+                    }
                     Err(_) => tracing::warn!(
                         mcp = %id,
                         field = %field.id,
@@ -120,6 +129,7 @@ pub async fn handle(
         StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut resp_headers = std::mem::take(upstream.headers_mut());
     resp_headers.remove(header::CONTENT_LENGTH);
+    resp_headers.remove(header::SET_COOKIE);
     for h in HOP_BY_HOP {
         resp_headers.remove(h);
     }

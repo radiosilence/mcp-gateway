@@ -122,8 +122,9 @@ fn credentialed(
 ) -> reqwest::RequestBuilder {
     for field in &mcp.fields {
         if let Some(value) = credentials.get(&field.id).filter(|v| !v.is_empty())
-            && let Ok(v) = header::HeaderValue::from_str(value)
+            && let Ok(mut v) = header::HeaderValue::from_str(value)
         {
+            v.set_sensitive(true);
             req = req.header(field.header.as_str(), v);
         }
     }

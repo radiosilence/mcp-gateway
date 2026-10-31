@@ -161,15 +161,45 @@ impl Store {
         }
     }
 
-    /// Encrypt and upsert a user's credential set for an MCP.
-    pub async fn set_credentials(
+    /// Replace a user's credential set for an MCP with `merge(stored)`, and
+    /// return what was stored before alongside what is stored now.
+    ///
+    /// The row is locked from the read to the write. Every change rewrites the
+    /// whole encrypted set, so two saves that each read, merged and wrote
+    /// independently would lose one side's field: the calendar picker saving
+    /// while the credential form is submitted, say. `merge` refusing leaves the
+    /// row untouched and hands its error back.
+    ///
+    /// A user's very first save has no row to lock; two of those racing end
+    /// with the later one, which is all either of them asked for.
+    pub async fn update_credentials<E>(
         &self,
         sub: &str,
         mcp_id: &str,
-        values: &CredentialSet,
-    ) -> Result<()> {
-        let secret = encode_secret(values);
-        let sealed = self.cipher.seal(&secret)?;
+        primary_field: &str,
+        merge: impl FnOnce(Option<&CredentialSet>) -> std::result::Result<CredentialSet, E>,
+    ) -> Result<std::result::Result<(Option<CredentialSet>, CredentialSet), E>> {
+        let mut tx = self.pool.begin().await?;
+        let stored = sqlx::query(
+            "SELECT enc_secret FROM credentials WHERE sub = $1 AND mcp_id = $2 FOR UPDATE",
+        )
+        .bind(sub)
+        .bind(mcp_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|row| {
+            let sealed: String = row.get("enc_secret");
+            self.cipher
+                .open(&sealed)
+                .map(|plain| decode_secret(&plain, primary_field))
+        })
+        .transpose()?;
+
+        let values = match merge(stored.as_ref()) {
+            Ok(values) => values,
+            Err(e) => return Ok(Err(e)),
+        };
+        let sealed = self.cipher.seal(&encode_secret(&values))?;
         sqlx::query(
             "INSERT INTO credentials (sub, mcp_id, enc_secret, updated_at)
              VALUES ($1, $2, $3, now())
@@ -178,9 +208,10 @@ impl Store {
         .bind(sub)
         .bind(mcp_id)
         .bind(&sealed)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
-        Ok(())
+        tx.commit().await?;
+        Ok(Ok((stored, values)))
     }
 
     pub async fn delete_credential(&self, sub: &str, mcp_id: &str) -> Result<()> {

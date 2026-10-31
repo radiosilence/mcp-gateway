@@ -80,35 +80,27 @@ pub async fn set_credential(
         return Err(AppError::BadRequest("unknown mcp".into()));
     };
 
-    let stored = state
+    let saved = state
         .store
-        .get_credentials(&session.sub, &mcp_id, mcp.primary_field())
+        .update_credentials(&session.sub, &mcp_id, mcp.primary_field(), |stored| {
+            let mut values = CredentialSet::new();
+            for field in &mcp.fields {
+                let submitted = form.get(&field.id).map(String::as_str);
+                let stored_value = stored.and_then(|s| s.get(&field.id)).map(String::as_str);
+                if let Some(value) = resolve_field(field, submitted, stored_value)? {
+                    values.insert(field.id.clone(), value);
+                }
+            }
+            Ok(values)
+        })
         .await
         .map_err(AppError::Internal)?;
-
-    let mut values = CredentialSet::new();
-    for field in &mcp.fields {
-        let submitted = form.get(&field.id).map(String::as_str);
-        let stored_value = stored
-            .as_ref()
-            .and_then(|s| s.get(&field.id))
-            .map(String::as_str);
-        match resolve_field(field, submitted, stored_value) {
-            Ok(Some(value)) => {
-                values.insert(field.id.clone(), value);
-            }
-            Ok(None) => {}
-            Err(complaint) => {
-                return section(&state, &session, mcp, Notice::wrong(complaint)).await;
-            }
+    let (stored, values) = match saved {
+        Ok(saved) => saved,
+        Err(complaint) => {
+            return section(&state, &session, mcp, Notice::wrong(complaint)).await;
         }
-    }
-
-    state
-        .store
-        .set_credentials(&session.sub, &mcp_id, &values)
-        .await
-        .map_err(AppError::Internal)?;
+    };
 
     match sync_upstream(&state, mcp, &values, stored.as_ref()).await {
         None => section(&state, &session, mcp, Notice::said("Saved")).await,
@@ -267,32 +259,24 @@ pub async fn set_field(
     }
 
     // Merge into what's stored: everything else stays as it was.
-    let Some(stored) = state
+    let (stored, values) = state
         .store
-        .get_credentials(&session.sub, &mcp_id, mcp.primary_field())
+        .update_credentials(&session.sub, &mcp_id, mcp.primary_field(), |stored| {
+            let mut values = stored
+                .cloned()
+                .ok_or_else(|| AppError::BadRequest("no credentials stored".into()))?;
+            match value.is_empty() {
+                true => values.remove(&field_id),
+                false => values.insert(field_id.clone(), value.to_string()),
+            };
+            Ok(values)
+        })
         .await
-        .map_err(AppError::Internal)?
-    else {
-        return Err(AppError::BadRequest("no credentials stored".into()));
-    };
-    let mut values = stored.clone();
-    match value.is_empty() {
-        true => {
-            values.remove(&field_id);
-        }
-        false => {
-            values.insert(field_id.clone(), value.to_string());
-        }
-    }
-    state
-        .store
-        .set_credentials(&session.sub, &mcp_id, &values)
-        .await
-        .map_err(AppError::Internal)?;
+        .map_err(AppError::Internal)??;
 
     // A backend that refused the change is worth saying out loud; our stored
     // value is authoritative either way, so the save still stands.
-    let refused = sync_upstream(&state, mcp, &values, Some(&stored)).await;
+    let refused = sync_upstream(&state, mcp, &values, stored.as_ref()).await;
     Ok(status_fragment(
         format!("field-status-{mcp_id}-{field_id}"),
         refused.clone().unwrap_or_else(|| "Saved".into()),

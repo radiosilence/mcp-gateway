@@ -53,7 +53,8 @@ impl Cipher {
             .inner
             .decrypt(&nonce, ciphertext)
             .map_err(|e| anyhow!("decrypt failed (wrong key or tampered data): {e}"))?;
-        String::from_utf8(plaintext).context("decrypted token not valid UTF-8")
+        // Not `.context()`: the error would carry the decrypted bytes with it.
+        String::from_utf8(plaintext).map_err(|_| anyhow!("decrypted token not valid UTF-8"))
     }
 }
 

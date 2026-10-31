@@ -139,10 +139,11 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let config = Config::from_env()?;
+    let mut config = Config::from_env()?;
     let bind_addr = config.bind_addr.clone();
 
-    let cipher = Cipher::new(&config.token_enc_key)?;
+    // The cipher holds the key from here on; no second copy stays in config.
+    let cipher = Cipher::new(&std::mem::take(&mut config.token_enc_key))?;
     let store = Store::connect(&config.database_url, cipher).await?;
     store.migrate().await?;
     tracing::info!("database connected & migrated");
@@ -267,7 +268,9 @@ async fn main() -> Result<()> {
 
     // An open SSE stream never finishes on its own, so waiting for every
     // connection to drain would wait out the orchestrator's grace period and
-    // end in SIGKILL anyway. Requests that can finish get a few seconds.
+    // end in SIGKILL anyway. Requests that can finish get a few seconds; then
+    // main returns, and dropping the runtime cancels the connections still
+    // running, since each is its own task.
     tokio::select! {
         result = &mut server => result?,
         _ = async {

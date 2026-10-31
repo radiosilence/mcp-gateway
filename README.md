@@ -133,10 +133,10 @@ All via env (see `.env.example`). Notable:
 
 | var | meaning |
 |-----|---------|
-| `PUBLIC_URL` | browser/Claude-facing base of the gateway |
+| `PUBLIC_URL` | browser/Claude-facing base of the gateway; also the audience a client must be registered with for its tokens to be accepted |
 | `TOKEN_ENC_KEY` | 32-byte base64 key; the only thing protecting stored credentials |
 | `HYDRA_ISSUER` | browser/Claude-facing Hydra URL; advertised in protected-resource metadata, and where a dashboard login is sent |
-| `HYDRA_ADMIN_URL` | Hydra admin API — introspection only — cluster-internal |
+| `HYDRA_ADMIN_URL` | Hydra admin API — introspection and client lookups — cluster-internal |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | this gateway's own registration at the issuer; the login provider generates them |
 | `MCP_REGISTRY` | the MCP registry document itself (YAML or JSON) — required |
 
@@ -345,13 +345,23 @@ Built to be internet-facing. The load-bearing pieces:
   with a valid token *is* the check having passed.
 - **Opaque tokens** — access tokens are introspected at Hydra per request; no
   JWT reaches a client, and tokens are revocable.
+- **Tokens for this gateway only** — Hydra issues tokens for every relying
+  party of the issuer, so a live token alone would let one issued to another
+  service (a dashboard, a media server) act here, with the stored credentials
+  behind it. A token is accepted only when its client is registered with
+  `PUBLIC_URL` in its `audience`. The login provider registers every
+  self-registered client that way; first-party clients of other services have
+  no audience and are refused. The decision is on the client rather than on the
+  token's own audience because Hydra copies a token's audience through every
+  refresh, so a token-side check would refuse every grant made before it, and
+  the client's registration is cached for five minutes.
 - **Per-IP rate limiting** on the auth routes (forwarded-IP aware, since a
   reverse proxy fronts this).
 - **Credentials encrypted at rest** — per-user MCP keys are sealed with
   XChaCha20-Poly1305. `TOKEN_ENC_KEY` is the only thing protecting them: keep it
   in a real secret store, never in the image or git. Rotating it orphans stored
   keys (users re-paste) — acceptable given disposable state, but deliberate.
-- **Hydra admin API is never exposed** — introspection uses the
+- **Hydra admin API is never exposed** — introspection and client lookups use the
   cluster-internal admin port only. It answers for any token without
   authenticating the caller.
 - **Custodial by nature** — the gateway holds credentials for every user and MCP

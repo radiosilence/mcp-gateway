@@ -168,7 +168,7 @@ async fn main() -> Result<()> {
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
 
-    let hydra = HydraAdmin::new(&config.hydra_admin_url, http.clone());
+    let hydra = HydraAdmin::new(&config.hydra_admin_url, &config.public_url, http.clone());
 
     let state = AppState {
         config: Arc::new(config),

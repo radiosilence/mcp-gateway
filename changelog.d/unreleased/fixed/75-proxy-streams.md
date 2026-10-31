@@ -1,0 +1,1 @@
+- **Proxied MCP streams are no longer cut at 15 seconds.** The proxy shared the 15-second client used for one-shot calls, and that timeout covers the response body, so SSE streams and slow tool calls were dropped mid-response. It now has its own client with a connect timeout and a five-minute idle timeout per read.

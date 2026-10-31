@@ -181,31 +181,22 @@ impl McpView {
     /// for the badge, the timestamp and the settings to disagree.
     pub(super) async fn build(state: &AppState, session: &Session, m: &Mcp) -> AppResult<Self> {
         let base = state.config.public_url.trim_end_matches('/');
-        let meta = state
+        // Non-secret values are read back so they can be edited in place;
+        // secrets are never decrypted for rendering. Fetched whenever anything
+        // is stored, not only when a visible field wants prefilling: a secret
+        // needs it too, to say that it is set.
+        let (stored, meta) = state
             .store
-            .credential_meta(&session.sub, &m.id)
+            .get_credentials_with_meta(&session.sub, &m.id, m.primary_field())
             .await
-            .map_err(AppError::Internal)?;
+            .map_err(AppError::Internal)?
+            .unzip();
         // A public MCP is connected the moment the user has logged in — there
         // is nothing to store, so nothing to wait for.
         let (has_credential, updated_at, updated_ago) = match (m.is_public(), meta) {
             (true, _) => (true, String::new(), String::new()),
             (false, Some(meta)) => (true, meta.updated_at_rfc3339(), meta.updated_ago()),
             (false, None) => (false, String::new(), String::new()),
-        };
-
-        // Non-secret values are read back so they can be edited in place;
-        // secrets are never decrypted for rendering.
-        // Fetched whenever anything is stored, not only when a visible field
-        // wants prefilling: a secret needs it too, to say that it is set.
-        let stored = if has_credential {
-            state
-                .store
-                .get_credentials(&session.sub, &m.id, m.primary_field())
-                .await
-                .map_err(AppError::Internal)?
-        } else {
-            None
         };
 
         let fields: Vec<FieldView> = m

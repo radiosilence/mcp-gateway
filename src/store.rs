@@ -127,30 +127,82 @@ impl Store {
         mcp_id: &str,
         primary_field: &str,
     ) -> Result<Option<CredentialSet>> {
-        let row = sqlx::query("SELECT enc_secret FROM credentials WHERE sub = $1 AND mcp_id = $2")
-            .bind(sub)
-            .bind(mcp_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        Ok(self
+            .get_credentials_with_meta(sub, mcp_id, primary_field)
+            .await?
+            .map(|(values, _)| values))
+    }
+
+    /// [`Self::get_credentials`] along with when they were last saved, in the
+    /// one query the dashboard needs for each MCP it shows.
+    pub async fn get_credentials_with_meta(
+        &self,
+        sub: &str,
+        mcp_id: &str,
+        primary_field: &str,
+    ) -> Result<Option<(CredentialSet, TokenMeta)>> {
+        let row = sqlx::query(
+            "SELECT enc_secret, updated_at FROM credentials WHERE sub = $1 AND mcp_id = $2",
+        )
+        .bind(sub)
+        .bind(mcp_id)
+        .fetch_optional(&self.pool)
+        .await?;
         match row {
             Some(row) => {
                 let sealed: String = row.get("enc_secret");
                 let plain = self.cipher.open(&sealed)?;
-                Ok(Some(decode_secret(&plain, primary_field)))
+                let meta = TokenMeta {
+                    updated_at: row.get("updated_at"),
+                };
+                Ok(Some((decode_secret(&plain, primary_field), meta)))
             }
             None => Ok(None),
         }
     }
 
-    /// Encrypt and upsert a user's credential set for an MCP.
-    pub async fn set_credentials(
+    /// Replace a user's credential set for an MCP with `merge(stored)`, and
+    /// return what was stored before alongside what is stored now.
+    ///
+    /// The row is locked from the read to the write. Every change rewrites the
+    /// whole encrypted set, so two saves that each read, merged and wrote
+    /// independently would lose one side's field: the calendar picker saving
+    /// while the credential form is submitted, say. `merge` refusing leaves the
+    /// row untouched and hands its error back.
+    ///
+    /// A user's very first save has no row to lock; two of those racing end
+    /// with the later one, which is all either of them asked for.
+    pub async fn update_credentials<E>(
         &self,
         sub: &str,
         mcp_id: &str,
-        values: &CredentialSet,
-    ) -> Result<()> {
-        let secret = encode_secret(values);
-        let sealed = self.cipher.seal(&secret)?;
+        primary_field: &str,
+        merge: impl FnOnce(Option<&CredentialSet>) -> std::result::Result<CredentialSet, E>,
+    ) -> Result<std::result::Result<(Option<CredentialSet>, CredentialSet), E>> {
+        let mut tx = self.pool.begin().await?;
+        let stored = sqlx::query(
+            "SELECT enc_secret FROM credentials WHERE sub = $1 AND mcp_id = $2 FOR UPDATE",
+        )
+        .bind(sub)
+        .bind(mcp_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|row| {
+            let sealed: String = row.get("enc_secret");
+            self.cipher
+                .open(&sealed)
+                .map(|plain| decode_secret(&plain, primary_field))
+        })
+        .transpose()?;
+
+        let values = match merge(stored.as_ref()) {
+            Ok(values) => values,
+            Err(e) => {
+                tx.rollback().await?;
+                return Ok(Err(e));
+            }
+        };
+        let sealed = self.cipher.seal(&encode_secret(&values))?;
         sqlx::query(
             "INSERT INTO credentials (sub, mcp_id, enc_secret, updated_at)
              VALUES ($1, $2, $3, now())
@@ -159,9 +211,10 @@ impl Store {
         .bind(sub)
         .bind(mcp_id)
         .bind(&sealed)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
-        Ok(())
+        tx.commit().await?;
+        Ok(Ok((stored, values)))
     }
 
     pub async fn delete_credential(&self, sub: &str, mcp_id: &str) -> Result<()> {
@@ -171,18 +224,6 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
-    }
-
-    /// Non-secret metadata for the dashboard (is a credential set, and when).
-    pub async fn credential_meta(&self, sub: &str, mcp_id: &str) -> Result<Option<TokenMeta>> {
-        let row = sqlx::query("SELECT updated_at FROM credentials WHERE sub = $1 AND mcp_id = $2")
-            .bind(sub)
-            .bind(mcp_id)
-            .fetch_optional(&self.pool)
-            .await?;
-        Ok(row.map(|row| TokenMeta {
-            updated_at: row.get("updated_at"),
-        }))
     }
 
     // ---- Dashboard sessions (opaque id → server-side state) ----
@@ -215,6 +256,18 @@ impl Store {
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         sqlx::query("DELETE FROM sessions WHERE id = $1")
             .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Remove sessions and login flows past their expiry. Lookups already
+    /// ignore them; this is only so the tables do not grow forever.
+    pub async fn delete_expired(&self) -> Result<()> {
+        sqlx::query("DELETE FROM sessions WHERE expires_at <= now()")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM oauth_flows WHERE expires_at <= now()")
             .execute(&self.pool)
             .await?;
         Ok(())

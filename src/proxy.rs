@@ -31,7 +31,7 @@ pub async fn handle(
     State(state): State<AppState>,
     Path(id): Path<String>,
     method: Method,
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let Some(mcp) = state.config.mcp(&id) else {
@@ -53,22 +53,25 @@ pub async fn handle(
 
     // Forward headers minus hop-by-hop, auth, host, length — and critically
     // every credential header this MCP uses, so a client can't smuggle its own.
-    let mut fwd = headers.clone();
-    fwd.remove(header::AUTHORIZATION);
-    fwd.remove(header::HOST);
-    fwd.remove(header::CONTENT_LENGTH);
+    headers.remove(header::AUTHORIZATION);
+    headers.remove(header::HOST);
+    headers.remove(header::CONTENT_LENGTH);
+    // The gateway's own session cookie would otherwise reach every backend,
+    // and a backend's Set-Cookie would land on the gateway's origin. MCP
+    // sessions travel in `mcp-session-id`, so neither needs to cross.
+    headers.remove(header::COOKIE);
     for field in &mcp.fields {
-        fwd.remove(field.header.as_str());
+        headers.remove(field.header.as_str());
     }
     for h in HOP_BY_HOP {
-        fwd.remove(h);
+        headers.remove(h);
     }
 
     let mut req = state
-        .http
+        .proxy_http
         .request(method, &mcp.backend)
-        .headers(fwd)
-        .body(body.to_vec());
+        .headers(headers)
+        .body(body);
 
     // Inject the user's credentials for this MCP (absent is not fatal — the
     // backend returns its own "not configured" error the model can relay).
@@ -94,7 +97,12 @@ pub async fn handle(
                 // user input, so a bad one is skipped rather than failing the
                 // whole request with a confusing transport error.
                 match header::HeaderValue::from_str(value) {
-                    Ok(v) => req = req.header(field.header.as_str(), v),
+                    Ok(mut v) => {
+                        // Redacted from Debug output and never added to an
+                        // HTTP/2 header compression table.
+                        v.set_sensitive(true);
+                        req = req.header(field.header.as_str(), v);
+                    }
                     Err(_) => tracing::warn!(
                         mcp = %id,
                         field = %field.id,
@@ -108,7 +116,7 @@ pub async fn handle(
         Err(e) => tracing::error!(error = %e, "credential lookup failed"),
     }
 
-    let upstream = match req.send().await {
+    let mut upstream = match req.send().await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, mcp = %id, "backend request failed");
@@ -119,8 +127,9 @@ pub async fn handle(
     // Relay status + headers, stream the body (SSE-safe).
     let status =
         StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let mut resp_headers = upstream.headers().clone();
+    let mut resp_headers = std::mem::take(upstream.headers_mut());
     resp_headers.remove(header::CONTENT_LENGTH);
+    resp_headers.remove(header::SET_COOKIE);
     for h in HOP_BY_HOP {
         resp_headers.remove(h);
     }

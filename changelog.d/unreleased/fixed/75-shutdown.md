@@ -1,0 +1,1 @@
+- **SIGTERM stops the gateway.** It runs as PID 1 with no handler, which the kernel treats as ignoring the signal, so every stop waited for SIGKILL. It now drains for five seconds and exits; open SSE streams are closed rather than waited on, since they never finish by themselves.

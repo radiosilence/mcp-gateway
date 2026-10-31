@@ -16,6 +16,7 @@ mod state;
 mod store;
 mod well_known;
 
+use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -138,10 +139,12 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let config = Config::from_env()?;
+    let mut config = Config::from_env()?;
     let bind_addr = config.bind_addr.clone();
 
-    let cipher = Cipher::new(&config.token_enc_key)?;
+    // Config is cloned into every handler's state and the cipher is all that
+    // needs the key, so it is not kept there. The freed buffer is not wiped.
+    let cipher = Cipher::new(&std::mem::take(&mut config.token_enc_key))?;
     let store = Store::connect(&config.database_url, cipher).await?;
     store.migrate().await?;
     tracing::info!("database connected & migrated");
@@ -150,12 +153,28 @@ async fn main() -> Result<()> {
         .timeout(std::time::Duration::from_secs(15))
         .build()?;
 
+    // reqwest's total timeout covers the body as well, so it cannot be used
+    // here. The read timeout resets on every chunk: a stream carrying traffic
+    // lives as long as it likes, an idle notification stream is closed and the
+    // client reconnects, and a backend that accepts and never answers is
+    // bounded. It is long because a tool call answered as plain JSON sends
+    // nothing until it has finished.
+    //
+    // Redirects are relayed to the client rather than followed: following one
+    // would send the injected credentials to whichever host it names.
+    let proxy_http = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(300))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+
     let hydra = HydraAdmin::new(&config.hydra_admin_url, http.clone());
 
     let state = AppState {
         config: Arc::new(config),
-        store,
+        store: store.clone(),
         http,
+        proxy_http,
         hydra,
     };
 
@@ -182,7 +201,21 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Expired sessions and abandoned logins are otherwise never removed, and
+    // `/login` writes a row for anybody who asks. Every replica sweeping is
+    // harmless: the delete is idempotent.
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(3_600));
+        loop {
+            interval.tick().await;
+            if let Err(e) = store.delete_expired().await {
+                tracing::warn!(error = %e, "sweeping expired sessions failed");
+            }
+        }
+    });
+
     let auth_routes = Router::new()
+        .route("/login", get(auth::routes::login))
         .route("/auth/callback", get(auth::routes::callback))
         .layer(GovernorLayer::new(auth_governor));
 
@@ -192,7 +225,6 @@ async fn main() -> Result<()> {
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
         .route("/assets/datastar.js", get(datastar_js))
-        .route("/login", get(auth::routes::login))
         .route("/logout", get(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
         .route("/dashboard/{mcp_id}/token", post(dashboard::set_credential))
@@ -227,12 +259,55 @@ async fn main() -> Result<()> {
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     tracing::info!("listening on http://{bind_addr}");
-    axum::serve(
+    let (stopping_tx, stopping) = tokio::sync::oneshot::channel();
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .await?;
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        let _ = stopping_tx.send(());
+    })
+    .into_future();
+    tokio::pin!(server);
+
+    // An open SSE stream never finishes on its own, so waiting for every
+    // connection to drain would wait out the orchestrator's grace period and
+    // end in SIGKILL anyway. Requests that can finish get a few seconds; then
+    // main returns, and dropping the runtime cancels the connections still
+    // running, since each is its own task.
+    tokio::select! {
+        result = &mut server => result?,
+        _ = async {
+            if stopping.await.is_err() {
+                std::future::pending::<()>().await;
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        } => tracing::info!("connections still open after the drain period; exiting"),
+    }
     Ok(())
+}
+
+/// SIGTERM is how the orchestrator stops a pod. The binary is PID 1 in a
+/// scratch image, and the kernel ignores SIGTERM for PID 1 unless it installs a
+/// handler, so without this every stop waits for SIGKILL.
+async fn shutdown_signal() {
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot listen for SIGTERM");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    tokio::select! {
+        Ok(()) = tokio::signal::ctrl_c() => {}
+        _ = terminate => {}
+    }
+    tracing::info!("shutting down");
 }
 
 #[cfg(test)]

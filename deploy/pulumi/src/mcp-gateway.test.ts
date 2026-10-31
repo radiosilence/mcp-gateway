@@ -92,6 +92,7 @@ describe("mcpRegistry", () => {
 });
 
 describe("hydraIngress", () => {
+  const gateway = { podSelector: { matchLabels: { app: "mcp-gateway" } } };
   const traefik = { "app.kubernetes.io/name": "traefik" };
 
   it("admits only the gateway and named callers to each port", () => {
@@ -99,14 +100,11 @@ describe("hydraIngress", () => {
       hydraIngress({ admin: [{ app: "auth" }], public: [traefik] }),
     ).toEqual([
       {
-        from: [
-          { podSelector: { matchLabels: { app: "mcp-gateway" } } },
-          { podSelector: { matchLabels: { app: "auth" } } },
-        ],
+        from: [gateway, { podSelector: { matchLabels: { app: "auth" } } }],
         ports: [{ protocol: "TCP", port: 4445 }],
       },
       {
-        from: [{ podSelector: { matchLabels: traefik } }],
+        from: [gateway, { podSelector: { matchLabels: traefik } }],
         ports: [{ protocol: "TCP", port: 4444 }],
       },
     ]);
@@ -115,8 +113,17 @@ describe("hydraIngress", () => {
   // An empty `from` admits every source, which would open the port it was
   // meant to close.
   it("never emits a rule with an empty `from`", () => {
-    const rules = hydraIngress({ admin: [], public: [] });
-    expect(rules).toHaveLength(1);
-    for (const rule of rules) expect(rule.from.length).toBeGreaterThan(0);
+    for (const rule of hydraIngress({ admin: [], public: [] }))
+      expect(rule.from).toEqual([gateway]);
+  });
+
+  // `matchLabels: {}` selects every pod in the namespace.
+  it("refuses an empty label set on either port", () => {
+    expect(() => hydraIngress({ admin: [{}], public: [] })).toThrow(
+      /empty label set/,
+    );
+    expect(() => hydraIngress({ admin: [], public: [traefik, {}] })).toThrow(
+      /empty label set/,
+    );
   });
 });

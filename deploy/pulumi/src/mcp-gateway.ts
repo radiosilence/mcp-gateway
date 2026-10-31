@@ -77,25 +77,26 @@ type Labels = Record<string, string>;
 export type HydraCallers = { admin: Labels[]; public: Labels[] };
 
 /**
- * Hydra's ingress rules: the admin port to this gateway and the named admin
- * callers, the public port to the named public callers.
+ * Hydra's ingress rules: each port to this gateway plus the callers named for
+ * it.
  *
- * A rule whose `from` is empty admits every source, so an empty `public` list
- * drops that rule rather than emitting one: the port is then closed, which
- * fails loudly at sign-in instead of opening Hydra to the cluster.
+ * The gateway is on both so neither rule's `from` is ever empty, since an empty
+ * `from` admits every source. An empty label set is refused for the same
+ * reason: `matchLabels: {}` selects every pod in the namespace.
  */
 export function hydraIngress(callers: HydraCallers) {
   const from = (labels: Labels[]) =>
-    labels.map((matchLabels) => ({ podSelector: { matchLabels } }));
+    [{ app: "mcp-gateway" }, ...labels].map((matchLabels) => {
+      if (!Object.keys(matchLabels).length)
+        throw new Error(
+          "hydraCallers: an empty label set selects every pod in the namespace",
+        );
+      return { podSelector: { matchLabels } };
+    });
   const port = (n: number) => [{ protocol: "TCP", port: n }];
   return [
-    {
-      from: from([{ app: "mcp-gateway" }, ...callers.admin]),
-      ports: port(4445),
-    },
-    ...(callers.public.length
-      ? [{ from: from(callers.public), ports: port(4444) }]
-      : []),
+    { from: from(callers.admin), ports: port(4445) },
+    { from: from(callers.public), ports: port(4444) },
   ];
 }
 
@@ -153,10 +154,11 @@ export function createMcpGateway(
      *
      * `admin` answers without authenticating its caller and can accept a login
      * as anyone, so it names the identity provider answering Hydra's
-     * challenges and nothing else. This gateway is admitted to it here.
-     * `public` names the ingress, and any relying party that exchanges codes
-     * in-cluster rather than through it. Leaving a caller out breaks sign-in
-     * for whatever it serves.
+     * challenges and nothing else. `public` names the ingress, and any
+     * relying party that exchanges codes in-cluster rather than through it.
+     * This gateway is admitted to both. Leaving a caller out breaks sign-in
+     * for whatever it serves; an empty label set throws, since it would
+     * select every pod.
      */
     hydraCallers: HydraCallers;
   },
@@ -404,8 +406,20 @@ export function createMcpGateway(
                   { name: "public", containerPort: 4444 },
                   { name: "admin", containerPort: 4445 },
                 ],
+                // Over loopback inside the pod, so the probe never crosses the
+                // NetworkPolicy below and works whatever the CNI does with
+                // node-originated traffic. The pinned image is Alpine and ships
+                // busybox wget, which exits non-zero on an HTTP error.
                 readinessProbe: {
-                  httpGet: { path: "/health/ready", port: 4445 },
+                  exec: {
+                    command: [
+                      "wget",
+                      "-q",
+                      "-O",
+                      "/dev/null",
+                      "http://127.0.0.1:4445/health/ready",
+                    ],
+                  },
                   initialDelaySeconds: 5,
                   periodSeconds: 10,
                 },
@@ -605,8 +619,7 @@ export function createMcpGateway(
   );
 
   // Hydra's admin API authenticates nobody, so which pods can reach it is the
-  // whole of its access control. The kubelet's readiness probe comes from the
-  // node rather than a pod, and the CNI admits that to local pods regardless.
+  // whole of its access control.
   new k8s.networking.v1.NetworkPolicy(
     "mcp-gateway-hydra-netpol",
     {

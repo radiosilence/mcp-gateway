@@ -142,7 +142,7 @@ impl Store {
         match row {
             Some(row) => {
                 let sealed: String = row.get("enc_secret");
-                let plain = self.cipher.open(&sealed, &row_binding(sub, mcp_id))?;
+                let plain = self.unseal(sub, mcp_id, &sealed).await?;
                 let meta = TokenMeta {
                     updated_at: row.get("updated_at"),
                 };
@@ -170,10 +170,9 @@ impl Store {
             let Some(mcp) = mcps.iter().find(|m| m.id == mcp_id) else {
                 continue;
             };
-            let plain = self.cipher.open(
-                &row.get::<String, _>("enc_secret"),
-                &row_binding(sub, &mcp_id),
-            )?;
+            let plain = self
+                .unseal(sub, &mcp_id, &row.get::<String, _>("enc_secret"))
+                .await?;
             let meta = TokenMeta {
                 updated_at: row.get("updated_at"),
             };
@@ -208,7 +207,7 @@ impl Store {
             let sealed: String = row.get("enc_secret");
             self.cipher
                 .open(&sealed, &row_binding(sub, mcp_id))
-                .map(|plain| decode_secret(&plain, primary_field))
+                .map(|opened| decode_secret(&opened.plain, primary_field))
         })
         .transpose()?;
 
@@ -245,47 +244,63 @@ impl Store {
         Ok(())
     }
 
-    /// Reseal, bound to their rows, the credentials stored before binding.
-    ///
-    /// Run once at startup. The advisory lock keeps replicas starting together
-    /// from resealing the same rows; the second waits, then finds none left.
-    /// The row locks keep an older replica's concurrent save from being
-    /// overwritten with the value read here. A
-    /// row that will not open is left alone and logged, so one bad row cannot
-    /// stop the gateway starting.
-    pub async fn reseal_legacy(&self) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('mcp-gateway:reseal'))")
-            .execute(&mut *tx)
-            .await?;
-        let rows = sqlx::query(
-            "SELECT sub, mcp_id, enc_secret FROM credentials WHERE enc_secret NOT LIKE 'v2.%' FOR UPDATE",
+    /// Open a stored credential, resealing it bound to its row if it predates
+    /// binding. Older replicas keep writing unbound blobs during a rollout, so
+    /// this is not left to startup alone.
+    async fn unseal(&self, sub: &str, mcp_id: &str, sealed: &str) -> Result<String> {
+        let binding = row_binding(sub, mcp_id);
+        let opened = self.cipher.open(sealed, &binding)?;
+        if opened.legacy
+            && let Err(e) = self.reseal(sub, mcp_id, sealed, &opened.plain).await
+        {
+            tracing::warn!(error = format!("{e:#}"), mcp = %mcp_id, "resealing a credential failed");
+        }
+        Ok(opened.plain)
+    }
+
+    /// Replace `old` with `plain` sealed to its row, only if the row still
+    /// holds `old`: a save that landed in between wins.
+    async fn reseal(&self, sub: &str, mcp_id: &str, old: &str, plain: &str) -> Result<()> {
+        let sealed = self.cipher.seal(plain, &row_binding(sub, mcp_id))?;
+        sqlx::query(
+            "UPDATE credentials SET enc_secret = $4 WHERE sub = $1 AND mcp_id = $2 AND enc_secret = $3",
         )
-        .fetch_all(&mut *tx)
+        .bind(sub)
+        .bind(mcp_id)
+        .bind(old)
+        .bind(sealed)
+        .execute(&self.pool)
         .await?;
-        let mut resealed = 0;
+        Ok(())
+    }
+
+    /// Reseal every credential stored before row binding. Run at startup; a
+    /// row that will not open is counted and left alone rather than stopping
+    /// the gateway.
+    pub async fn reseal_legacy(&self) -> Result<()> {
+        let rows = sqlx::query(
+            "SELECT sub, mcp_id, enc_secret FROM credentials WHERE enc_secret NOT LIKE 'v2.%'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let (mut resealed, mut unreadable) = (0, 0);
         for row in rows {
             let (sub, mcp_id, sealed): (String, String, String) =
                 (row.get("sub"), row.get("mcp_id"), row.get("enc_secret"));
-            let binding = row_binding(&sub, &mcp_id);
-            let plain = match self.cipher.open(&sealed, &binding) {
-                Ok(plain) => plain,
-                Err(e) => {
-                    tracing::error!(error = %e, %sub, mcp = %mcp_id, "a stored credential will not open; left as it is");
-                    continue;
+            match self.cipher.open(&sealed, &row_binding(&sub, &mcp_id)) {
+                Ok(opened) => {
+                    self.reseal(&sub, &mcp_id, &sealed, &opened.plain).await?;
+                    resealed += 1;
                 }
-            };
-            sqlx::query("UPDATE credentials SET enc_secret = $3 WHERE sub = $1 AND mcp_id = $2")
-                .bind(&sub)
-                .bind(&mcp_id)
-                .bind(self.cipher.seal(&plain, &binding)?)
-                .execute(&mut *tx)
-                .await?;
-            resealed += 1;
+                Err(_) => unreadable += 1,
+            }
         }
-        tx.commit().await?;
-        if resealed > 0 {
-            tracing::info!(resealed, "bound legacy credentials to their rows");
+        if resealed + unreadable > 0 {
+            tracing::info!(
+                resealed,
+                unreadable,
+                "bound legacy credentials to their rows"
+            );
         }
         Ok(())
     }

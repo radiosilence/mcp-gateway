@@ -4,9 +4,10 @@
 //!
 //! Each blob is bound to the row it belongs to through the associated data, so
 //! one user's sealed credentials copied into another's row fail to open. The
-//! stored form is `v2.` followed by base64(`nonce || ciphertext`); a blob without
-//! the prefix predates the binding and is resealed at startup
-//! ([`crate::store::Store::reseal_legacy`]).
+//! stored form is `v2.` followed by base64(`nonce || ciphertext`). A blob without
+//! the prefix predates the binding; it still opens, reported as legacy so the
+//! store can reseal it. Until that path is removed, a legacy blob planted in a
+//! row opens there too, so the binding protects fully only once it is gone.
 //!
 //! Rotating the key would mean re-encrypting every stored credential and is not
 //! supported.
@@ -26,9 +27,16 @@ pub struct Cipher {
     inner: XChaCha20Poly1305,
 }
 
-/// What a blob is bound to: the credential row's key.
+/// What a blob is bound to: the credential row's key. The NUL cannot occur in
+/// either part, since Postgres `TEXT` refuses it.
 pub fn row_binding(sub: &str, mcp_id: &str) -> Vec<u8> {
     [sub.as_bytes(), b"\0", mcp_id.as_bytes()].concat()
+}
+
+pub struct Opened {
+    pub plain: String,
+    /// Sealed before row binding, and due to be resealed.
+    pub legacy: bool,
 }
 
 impl Cipher {
@@ -57,10 +65,16 @@ impl Cipher {
         Ok(format!("{V2}{}", B64.encode(blob)))
     }
 
-    pub fn open(&self, sealed: &str, binding: &[u8]) -> Result<String> {
+    pub fn open(&self, sealed: &str, binding: &[u8]) -> Result<Opened> {
         match sealed.strip_prefix(V2) {
-            Some(sealed) => self.decrypt(sealed, binding),
-            None => self.decrypt(sealed, b""),
+            Some(sealed) => Ok(Opened {
+                plain: self.decrypt(sealed, binding)?,
+                legacy: false,
+            }),
+            None => Ok(Opened {
+                plain: self.decrypt(sealed, b"")?,
+                legacy: true,
+            }),
         }
     }
 
@@ -110,7 +124,9 @@ mod tests {
         let sealed = c.seal("fmu1-secret-token", &row).unwrap();
         assert!(!sealed.contains("fmu1"));
         assert!(sealed.starts_with(V2));
-        assert_eq!(c.open(&sealed, &row).unwrap(), "fmu1-secret-token");
+        let opened = c.open(&sealed, &row).unwrap();
+        assert_eq!(opened.plain, "fmu1-secret-token");
+        assert!(!opened.legacy);
     }
 
     #[test]
@@ -148,10 +164,12 @@ mod tests {
         assert!(c.open(&sealed, &row_binding("victim", "caldav")).is_err());
     }
 
-    /// MCP ids are slugs, so the NUL cannot be part of one.
     #[test]
     fn the_binding_separates_its_parts() {
         assert_ne!(row_binding("ab", "c"), row_binding("a", "bc"));
+        let c = cipher();
+        let sealed = c.seal("secret", &row_binding("ab", "c")).unwrap();
+        assert!(c.open(&sealed, &row_binding("a", "bc")).is_err());
     }
 
     #[test]
@@ -159,6 +177,8 @@ mod tests {
         let c = cipher();
         let sealed = c.seal_legacy("old");
         assert!(!sealed.starts_with(V2));
-        assert_eq!(c.open(&sealed, b"anything").unwrap(), "old");
+        let opened = c.open(&sealed, b"anything").unwrap();
+        assert_eq!(opened.plain, "old");
+        assert!(opened.legacy);
     }
 }

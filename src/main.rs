@@ -171,13 +171,17 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Every replica sweeping is harmless: the delete is idempotent.
+    // Every replica sweeping is harmless: both steps are idempotent.
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3_600));
         loop {
             interval.tick().await;
             if let Err(e) = store.delete_expired().await {
                 tracing::warn!(error = %e, "sweeping expired sessions failed");
+            }
+            // Binds credentials older replicas wrote during a rollout.
+            if let Err(e) = store.reseal_legacy().await {
+                tracing::warn!(error = %e, "resealing legacy credentials failed");
             }
         }
     });

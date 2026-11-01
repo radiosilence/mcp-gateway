@@ -1,8 +1,3 @@
-{#- A message, not a disabled dropdown. A <select> cannot wrap, so a sentence
-     put in one is clipped mid-word, and offering a control to pick from when
-     there is nothing to pick is its own kind of lie. The badge already carries
-     the verdict; this says what the backend actually replied.
-
-     Same id as the control it stands in for, because that is the slot Datastar
-     morphs into. -#}
-<p id="options-{{ mcp_id }}-{{ field_id }}" class="mt-1.5 text-xs text-amber-600 dark:text-amber-400">{{ error }}</p>
+{#- Stands in the control's slot with the backend's reply: a <select> cannot
+    wrap a sentence. -#}
+<p id="options-{{ mcp_id }}-{{ field_id }}" class="warn mt-1.5 text-xs">{{ error }}</p>

@@ -139,9 +139,9 @@ jobs:
             # Anything cargo compiles or that decides how. The templates,
             # stylesheet, scripts and migrations are compiled into the binary.
             touches '^src/|^templates/|^assets/|^migrations/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^\.github/' || rust=false
-            # The committed stylesheet: its source, everything Tailwind reads
-            # class names from, and the pinned Tailwind CLI.
-            touches '^templates/|^assets/|^tailwind\.config\.js$|^mise\.toml$|^\.github/' || web=false
+            # The committed bundle and stylesheet: their sources, the
+            # templates Tailwind reads class names from, and the toolchain.
+            touches '^web/|^templates/|^assets/|^package\.json$|^aube-lock\.yaml$|^tsconfig\.json$|^rolldown\.config\.ts$|^mise\.toml$|^\.github/' || web=false
             touches '^deploy/pulumi/|^\.github/' || package=false
             # The image is the static binaries in a scratch layer. The Rust
             # jobs already check the code, so a pull request builds them and
@@ -262,9 +262,9 @@ jobs:
             python3 scripts/changelog.py --lint
           fi
 
-  # The stylesheet is generated from the templates and committed, so the binary
-  # embeds it and there is nothing to fetch at runtime. That only holds while the
-  # committed copy matches its sources, which is what this checks.
+  # The script bundle and stylesheet are generated from web/ and the templates
+  # and committed, so the binary embeds them and a cargo build needs no node.
+  # That only holds while the committed copies match their sources.
   assets:
     name: Assets
     runs-on: ubuntu-latest
@@ -274,12 +274,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
-      - name: Rebuild the stylesheet
-        run: mise run css
-      - name: Check it matches what is committed
+      - name: Check the sources
+        run: mise run web-check
+      - name: Rebuild the assets
+        run: mise run web
+      - name: Check they match what is committed
         run: |
-          git diff --exit-code -- assets/app.css || {
-            echo "::error::assets/app.css is stale — run \`mise run css\` and commit the result"
+          git diff --exit-code -- assets/ || {
+            echo "::error::assets/ is stale — run \`mise run web\` and commit the result"
             exit 1
           }
 

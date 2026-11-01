@@ -246,7 +246,7 @@ mod tests {
         let html = t.render().unwrap();
         assert!(html.contains("— account default"));
         assert!(html.contains(r#"value="home" selected"#));
-        assert!(html.contains("@patch('/dashboard/caldav/field/calendar'"));
+        assert!(html.contains(r#"action="/dashboard/caldav/field/calendar""#));
         assert!(html.contains(r#"id="options-caldav-calendar""#));
     }
 

@@ -21,7 +21,7 @@ An OAuth-fronted gateway for self-hosted MCP servers: it authenticates the user 
 ```sh
 just check   # fmt --check, clippy -D warnings, tests, actionlint
 just fmt
-mise run css # after changing a template; CI checks assets/app.css is current
+mise run web # after changing web/ or a template; CI checks assets/ is current
 ```
 
 The Pulumi component is checked separately: `npm ci && npm run check` in `deploy/pulumi`.

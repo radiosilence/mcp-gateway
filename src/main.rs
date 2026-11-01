@@ -119,6 +119,7 @@ async fn main() -> Result<()> {
     let cipher = Cipher::new(&std::mem::take(&mut config.token_enc_key))?;
     let store = Store::connect(&config.database_url, cipher).await?;
     store.migrate().await?;
+    store.reseal_legacy().await?;
     tracing::info!("database connected & migrated");
 
     // Redirects are not followed: the dashboard's backend calls carry injected

@@ -8,12 +8,13 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use base64::Engine;
+use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 
 use crate::config::Mcp;
-use crate::crypto::Cipher;
+use crate::crypto::{Cipher, row_binding};
 
 /// A resolved dashboard session.
 pub struct Session {
@@ -25,6 +26,10 @@ pub struct Session {
 pub struct OAuthFlow {
     pub csrf: String,
     pub verifier: String,
+}
+
+fn session_key(id: &str) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(id.as_bytes()))
 }
 
 fn new_id() -> String {
@@ -137,7 +142,7 @@ impl Store {
         match row {
             Some(row) => {
                 let sealed: String = row.get("enc_secret");
-                let plain = self.cipher.open(&sealed)?;
+                let plain = self.cipher.open(&sealed, &row_binding(sub, mcp_id))?;
                 let meta = TokenMeta {
                     updated_at: row.get("updated_at"),
                 };
@@ -165,7 +170,10 @@ impl Store {
             let Some(mcp) = mcps.iter().find(|m| m.id == mcp_id) else {
                 continue;
             };
-            let plain = self.cipher.open(&row.get::<String, _>("enc_secret"))?;
+            let plain = self.cipher.open(
+                &row.get::<String, _>("enc_secret"),
+                &row_binding(sub, &mcp_id),
+            )?;
             let meta = TokenMeta {
                 updated_at: row.get("updated_at"),
             };
@@ -199,7 +207,7 @@ impl Store {
         .map(|row| {
             let sealed: String = row.get("enc_secret");
             self.cipher
-                .open(&sealed)
+                .open(&sealed, &row_binding(sub, mcp_id))
                 .map(|plain| decode_secret(&plain, primary_field))
         })
         .transpose()?;
@@ -211,7 +219,9 @@ impl Store {
                 return Ok(Err(e));
             }
         };
-        let sealed = self.cipher.seal(&encode_secret(&values))?;
+        let sealed = self
+            .cipher
+            .seal(&encode_secret(&values), &row_binding(sub, mcp_id))?;
         sqlx::query(
             "INSERT INTO credentials (sub, mcp_id, enc_secret, updated_at)
              VALUES ($1, $2, $3, now())
@@ -235,13 +245,59 @@ impl Store {
         Ok(())
     }
 
-    // ---- Dashboard sessions (opaque id → server-side state) ----
+    /// Reseal, bound to their rows, the credentials stored before binding.
+    ///
+    /// Run once at startup. The advisory lock keeps replicas starting together
+    /// from resealing the same rows; the second waits, then finds none left.
+    /// The row locks keep an older replica's concurrent save from being
+    /// overwritten with the value read here. A
+    /// row that will not open is left alone and logged, so one bad row cannot
+    /// stop the gateway starting.
+    pub async fn reseal_legacy(&self) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('mcp-gateway:reseal'))")
+            .execute(&mut *tx)
+            .await?;
+        let rows = sqlx::query(
+            "SELECT sub, mcp_id, enc_secret FROM credentials WHERE enc_secret NOT LIKE 'v2.%' FOR UPDATE",
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut resealed = 0;
+        for row in rows {
+            let (sub, mcp_id, sealed): (String, String, String) =
+                (row.get("sub"), row.get("mcp_id"), row.get("enc_secret"));
+            let binding = row_binding(&sub, &mcp_id);
+            let plain = match self.cipher.open(&sealed, &binding) {
+                Ok(plain) => plain,
+                Err(e) => {
+                    tracing::error!(error = %e, %sub, mcp = %mcp_id, "a stored credential will not open; left as it is");
+                    continue;
+                }
+            };
+            sqlx::query("UPDATE credentials SET enc_secret = $3 WHERE sub = $1 AND mcp_id = $2")
+                .bind(&sub)
+                .bind(&mcp_id)
+                .bind(self.cipher.seal(&plain, &binding)?)
+                .execute(&mut *tx)
+                .await?;
+            resealed += 1;
+        }
+        tx.commit().await?;
+        if resealed > 0 {
+            tracing::info!(resealed, "bound legacy credentials to their rows");
+        }
+        Ok(())
+    }
+
+    // ---- Dashboard sessions. The cookie carries the id; the table holds only
+    // its hash, so reading the table does not yield usable sessions. ----
 
     pub async fn create_session(&self, sub: &str, login: &str, ttl_secs: i64) -> Result<String> {
         let id = new_id();
         let expires_at = OffsetDateTime::now_utc() + time::Duration::seconds(ttl_secs);
         sqlx::query("INSERT INTO sessions (id, sub, login, expires_at) VALUES ($1, $2, $3, $4)")
-            .bind(&id)
+            .bind(session_key(&id))
             .bind(sub)
             .bind(login)
             .bind(expires_at)
@@ -253,7 +309,7 @@ impl Store {
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>> {
         let row =
             sqlx::query("SELECT sub, login FROM sessions WHERE id = $1 AND expires_at > now()")
-                .bind(id)
+                .bind(session_key(id))
                 .fetch_optional(&self.pool)
                 .await?;
         Ok(row.map(|row| Session {
@@ -264,7 +320,7 @@ impl Store {
 
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         sqlx::query("DELETE FROM sessions WHERE id = $1")
-            .bind(id)
+            .bind(session_key(id))
             .execute(&self.pool)
             .await?;
         Ok(())

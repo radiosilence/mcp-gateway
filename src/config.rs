@@ -181,20 +181,12 @@ impl Config {
     }
 }
 
-/// Headers a credential may not be injected as: framing, routing and session
-/// headers the proxy sets or strips, where a stored value would break or
-/// smuggle the request.
+/// Headers a credential may not be injected as, besides the hop-by-hop ones:
+/// framing, routing and session headers the proxy sets or strips, where a
+/// stored value would break or smuggle the request.
 const RESERVED_HEADERS: &[&str] = &[
     "host",
     "content-length",
-    "transfer-encoding",
-    "connection",
-    "keep-alive",
-    "te",
-    "trailers",
-    "upgrade",
-    "proxy-authenticate",
-    "proxy-authorization",
     "cookie",
     "mcp-session-id",
     "mcp-protocol-version",
@@ -310,7 +302,8 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
             f.header
         );
         anyhow::ensure!(
-            !RESERVED_HEADERS.contains(&f.header.as_str()),
+            !RESERVED_HEADERS.contains(&f.header.as_str())
+                && !crate::proxy::HOP_BY_HOP.contains(&f.header.as_str()),
             "MCP {:?} field {:?} uses {:?}, which the proxy manages itself",
             m.id,
             f.id,

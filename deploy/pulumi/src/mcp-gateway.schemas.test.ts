@@ -14,6 +14,12 @@ describe("McpSchema credentials", () => {
     image: "ghcr.io/example/x:v1",
   };
 
+  it("rejects an id the gateway would refuse", () => {
+    for (const id of ["a.b", "a b", "", "it's"]) {
+      expect(() => McpSchema.parse({ ...base, id, credentialHeader: "X-Token" })).toThrow();
+    }
+  });
+
   it("accepts the single-header shorthand", () => {
     const b = McpSchema.parse({ ...base, credentialHeader: "X-Token" });
     expect(b.public).toBeUndefined();

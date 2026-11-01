@@ -15,7 +15,7 @@ use axum::response::{IntoResponse, Response};
 
 use crate::state::AppState;
 
-const HOP_BY_HOP: [&str; 8] = [
+pub const HOP_BY_HOP: [&str; 8] = [
     "connection",
     "keep-alive",
     "proxy-authenticate",

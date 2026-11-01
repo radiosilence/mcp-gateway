@@ -168,9 +168,16 @@ JSON is accepted too, since every JSON document is valid YAML.
 service's environment, beside the backend services it names.
 
 `/fastmail` proxies to `backend`, injecting each stored value into the header
-its field names. (Ids that would shadow a gateway route — `register`,
-`auth`, `login`, `logout`, `dashboard`, `healthz`, `.well-known` — are rejected
-at startup.)
+its field names. The gateway refuses to start on a registry it cannot serve
+safely:
+
+- MCP and field ids must match `[A-Za-z0-9_-]+`, since they are written into
+  URLs and element ids; MCP ids must be unique, and must not shadow a gateway
+  route (`register`, `auth`, `login`, `logout`, `dashboard`, `healthz`,
+  `assets`).
+- A field may not use a header the proxy manages itself (`Host`,
+  `Content-Length`, hop-by-hop headers, `Cookie`, `Mcp-Session-Id`,
+  `Mcp-Protocol-Version`), and two fields of one MCP may not share a header.
 
 #### Saying whether the credentials actually work
 

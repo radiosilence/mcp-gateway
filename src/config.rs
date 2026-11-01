@@ -181,6 +181,25 @@ impl Config {
     }
 }
 
+/// Headers a credential may not be injected as: framing, routing and session
+/// headers the proxy sets or strips, where a stored value would break or
+/// smuggle the request.
+const RESERVED_HEADERS: &[&str] = &[
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "te",
+    "trailers",
+    "upgrade",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "cookie",
+    "mcp-session-id",
+    "mcp-protocol-version",
+];
+
 /// Path segments the gateway serves itself, which an MCP id would shadow.
 const RESERVED_IDS: &[&str] = &[
     "register",
@@ -276,12 +295,26 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
     }
 
     let mut seen = std::collections::HashSet::new();
+    let mut headers = std::collections::HashSet::new();
     for f in &m.fields {
         anyhow::ensure!(
             is_slug(&f.id) && seen.insert(f.id.as_str()),
             "MCP {:?} has an invalid or duplicated field id {:?}",
             m.id,
             f.id
+        );
+        anyhow::ensure!(
+            headers.insert(&f.header),
+            "MCP {:?} sends two fields in header {:?}",
+            m.id,
+            f.header
+        );
+        anyhow::ensure!(
+            !RESERVED_HEADERS.contains(&f.header.as_str()),
+            "MCP {:?} field {:?} uses {:?}, which the proxy manages itself",
+            m.id,
+            f.id,
+            f.header
         );
         // Its choices need stored credentials, so it is not on the connect form.
         anyhow::ensure!(
@@ -409,6 +442,20 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("duplicated"));
+    }
+
+    #[test]
+    fn rejects_headers_the_proxy_manages_or_two_fields_share() {
+        for fields in [
+            r#"[{"id":"a","label":"A","header":"Host"}]"#,
+            r#"[{"id":"a","label":"A","header":"Transfer-Encoding"}]"#,
+            r#"[{"id":"a","label":"A","header":"Mcp-Session-Id"}]"#,
+            r#"[{"id":"a","label":"A","header":"X-A"},{"id":"b","label":"B","header":"x-a"}]"#,
+        ] {
+            let doc =
+                format!(r#"[{{"id":"x","name":"X","backend":"http://x/mcp","fields":{fields}}}]"#);
+            assert!(parse(&doc).is_err(), "accepted {fields}");
+        }
     }
 
     #[test]

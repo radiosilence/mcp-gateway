@@ -149,8 +149,12 @@ async fn main() -> Result<()> {
     store.migrate().await?;
     tracing::info!("database connected & migrated");
 
+    // Redirects are not followed: the dashboard's backend calls carry injected
+    // credentials, and reqwest strips only the standard auth headers when a
+    // redirect changes host.
     let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
         .build()?;
 
     // reqwest's total timeout covers the body as well, so it cannot be used

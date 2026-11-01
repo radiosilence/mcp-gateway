@@ -1,61 +1,47 @@
-//! The choices a setting offers, which live in a backend rather than here.
-//!
-//! Reached only from the endpoint htmx calls. Nothing on this path runs while a
-//! page is being rendered: the choices come from somebody else's calendar
-//! server, and a render that waits on one is a page that a stranger's outage
-//! can hold open.
+//! What the dashboard asks backends: whether the stored credentials work, and
+//! which choices a setting offers.
 
-use axum::response::Response;
 use serde_json::{Value, json};
 
-use crate::dashboard::{FieldOptionsTemplate, OptionView, render};
+use crate::config::{Mcp, Verify};
+use crate::dashboard::{FieldOptionsTemplate, OptionView};
 use crate::state::AppState;
+use crate::store::CredentialSet;
 
-/// What the gateway can honestly say about a backend's credentials.
+/// What the gateway can say about a backend's credentials.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum Verified {
     /// The backend confirmed them.
     Yes,
-    /// The backend said they are wrong. Only ever from an explicit match, never
-    /// inferred from an error — a server having a bad day is not a bad password.
+    /// The backend said they are wrong. Only from an explicit match, never
+    /// inferred from an error.
     Rejected,
-    /// No check declared, or one that could not be completed. The gateway makes
-    /// no claim rather than a flattering guess.
+    /// No check declared, or one that could not be completed.
     Unknown,
 }
 
-/// Ask a backend whether it accepts what we hold.
-pub(super) async fn verify(state: &AppState, sub: &str, mcp: &crate::config::Mcp) -> Verified {
-    let Some(check) = &mcp.verify else {
+/// Ask a backend whether it accepts the stored credentials.
+pub(super) async fn verify(
+    state: &AppState,
+    mcp: &Mcp,
+    credentials: Option<&CredentialSet>,
+) -> Verified {
+    let (Some(check), Some(credentials)) = (&mcp.verify, credentials) else {
         return Verified::Unknown;
     };
-    let Ok(Some(credentials)) = state
-        .store
-        .get_credentials(sub, &mcp.id, mcp.primary_field())
-        .await
-    else {
-        return Verified::Unknown;
-    };
-    let data = match crate::backend::graphql(state, mcp, &credentials, &check.query, None).await {
-        Ok(data) => data,
+    match crate::backend::graphql(state, mcp, credentials, &check.query, None).await {
+        Ok(data) => read_verdict(check, &data),
+        // A revoked credential or an unwell server: not ours to guess which.
         Err(e) => {
-            // Could be a revoked credential, could be the server. Saying which
-            // without being told is how someone ends up rotating a working
-            // password — so it is logged rather than guessed at.
             tracing::info!(error = %e, mcp = %mcp.id, "credential check could not be completed");
-            return Verified::Unknown;
+            Verified::Unknown
         }
-    };
-
-    read_verdict(check, &data)
+    }
 }
 
-/// Read the answer out of the response. Separated from asking so the part that
-/// decides what a backend said can be tested without one.
-fn read_verdict(check: &crate::config::Verify, data: &Value) -> Verified {
+fn read_verdict(check: &Verify, data: &Value) -> Verified {
+    // No path: the backend raises on bad auth, so any answer is a yes.
     let Some(path) = &check.path else {
-        // Nothing named to read: the backend raises on bad auth, so having got
-        // an answer at all is the answer.
         return Verified::Yes;
     };
     let Some(value) = path.split('.').try_fold(data, |v, key| v.get(key)) else {
@@ -63,9 +49,6 @@ fn read_verdict(check: &crate::config::Verify, data: &Value) -> Verified {
     };
     let text = value.as_str();
 
-    // Only an explicit match calls a credential wrong. Everything unrecognised
-    // is unknown, because "not the value meaning success" covers a server that
-    // is merely unwell.
     if check.rejected.is_some() && text == check.rejected.as_deref() {
         return Verified::Rejected;
     }
@@ -87,11 +70,10 @@ pub(super) struct Choices {
     pub(super) current: String,
 }
 
-/// Ask one backend, with the user's own credentials.
 pub(super) async fn fetch_choices(
     state: &AppState,
     sub: &str,
-    mcp: &crate::config::Mcp,
+    mcp: &Mcp,
     field_id: &str,
     query: &str,
 ) -> anyhow::Result<Choices> {
@@ -107,24 +89,15 @@ pub(super) async fn fetch_choices(
     })
 }
 
-/// The `<option>` list for a setting, with the entries the backend marked
-/// unusable dropped and the stored value preselected.
-pub(super) fn options_fragment(
-    options: &Value,
-    current: &str,
-    mcp_id: &str,
-    field_id: &str,
-) -> Response {
-    render(options_template(options, current, mcp_id, field_id))
-}
-
+/// The `<option>` list for a setting: entries the backend marked unusable are
+/// dropped and the stored value preselected.
 pub(super) fn options_template(
     options: &Value,
     current: &str,
     mcp_id: &str,
     field_id: &str,
 ) -> FieldOptionsTemplate {
-    let entries = options.as_array().cloned().unwrap_or_default();
+    let entries = options.as_array().map(Vec::as_slice).unwrap_or_default();
     let account_default = entries
         .iter()
         .find(|o| o["isDefault"].as_bool().unwrap_or(false))
@@ -157,12 +130,8 @@ pub(super) fn options_template(
     }
 }
 
-/// The options a registry query returned, as a flat array.
-///
-/// A query may alias a plain list straight to `options`, or land on a Relay
-/// connection — `caldav-cli` returns one for every collection — in which case
-/// the rows are a level down. Both are unwrapped here so the registry stays a
-/// query and nothing else.
+/// The options a registry query returned, as a flat array: either a list
+/// aliased to `options`, or a Relay connection (`nodes` or `edges`) there.
 pub(super) fn options_of(data: &Value) -> Value {
     let options = match data.get("options") {
         Some(options) => options,
@@ -189,12 +158,8 @@ mod tests {
 
     use super::*;
 
-    fn check(
-        path: Option<&str>,
-        ok: Option<&str>,
-        rejected: Option<&str>,
-    ) -> crate::config::Verify {
-        crate::config::Verify {
+    fn check(path: Option<&str>, ok: Option<&str>, rejected: Option<&str>) -> Verify {
+        Verify {
             query: "{ viewer { status } }".into(),
             path: path.map(str::to_string),
             ok: ok.map(str::to_string),
@@ -216,8 +181,6 @@ mod tests {
 
         assert!(at("CONNECTED") == Verified::Yes);
         assert!(at("INVALID_CREDENTIALS") == Verified::Rejected);
-        // Not a verdict on the credential: the server is unwell, and saying
-        // "rejected" here sends someone off to rotate a working password.
         assert!(at("UNREACHABLE") == Verified::Unknown);
         assert!(at("SOMETHING_NEW") == Verified::Unknown);
     }
@@ -250,20 +213,6 @@ mod tests {
         assert!(read_verdict(&c, &json!({"viewer": {}})) == Verified::Unknown);
     }
 
-    /// An MCP that declares no check is not the same as one whose check did not
-    /// finish: the first is taken at its word, the second is only unknown. The
-    /// badge depends on telling those apart.
-    #[test]
-    fn declaring_no_check_is_not_a_failed_check() {
-        // `verify()` returns Unknown for both, so the distinction lives in the
-        // view: `m.verify.is_none()` is what separates them.
-        let none: Option<crate::config::Verify> = None;
-        assert!(none.is_none(), "no check declared");
-
-        let declared = check(Some("viewer.status"), Some("CONNECTED"), None);
-        assert!(read_verdict(&declared, &json!({})) == Verified::Unknown);
-    }
-
     /// Nothing is ever called rejected unless the registry named the value that
     /// means it.
     #[test]
@@ -275,8 +224,6 @@ mod tests {
         );
     }
 
-    /// The shaping that used to live in the browser: which entries are offered
-    /// at all, which is marked as the account's own, and which is preselected.
     #[test]
     fn options_are_filtered_labelled_and_preselected() {
         let data = json!([
@@ -287,8 +234,6 @@ mod tests {
         ]);
         let t = options_template(&data, "home", "caldav", "calendar");
 
-        // The placeholder names the backend's own default so the empty choice
-        // says what picking it will actually do.
         assert_eq!(t.account_default.as_deref(), Some("Work"));
 
         let offered: Vec<&str> = t.options.iter().map(|o| o.value.as_str()).collect();
@@ -298,14 +243,10 @@ mod tests {
         assert!(!t.options[0].selected);
         assert!(t.options[1].selected, "the stored value is preselected");
 
-        // The fragment replaces the skeleton outright, so it carries the
-        // control and must address the right endpoint itself.
         let html = t.render().unwrap();
         assert!(html.contains("— account default"));
         assert!(html.contains(r#"value="home" selected"#));
-        assert!(html.contains("@patch('/dashboard/caldav/field/calendar'"));
-        // The slot it morphs into, which is also the skeleton's and the error
-        // message's — three renderings of one place on the page.
+        assert!(html.contains(r#"action="/dashboard/caldav/field/calendar""#));
         assert!(html.contains(r#"id="options-caldav-calendar""#));
     }
 

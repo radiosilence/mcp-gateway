@@ -1,0 +1,1 @@
+- **The dashboard says why a setting was not saved.** Datastar ignores the body of a non-200 response, so refusals such as saving a setting before connecting showed nothing; they now come back as the setting's status line. A template that fails to render answers 500 rather than an empty patch.

@@ -3,12 +3,6 @@
 //! - `/auth/callback`      — the issuer's return leg
 //!
 //! All session and flow state is server-side; cookies carry only opaque ids.
-//!
-//! This used to be two flows through one callback: the dashboard's own GitHub
-//! OAuth, and the login/consent provider Hydra delegated to. The provider moved
-//! out to its own service, so what is left is an ordinary relying party — it
-//! sends the browser to the issuer and reads back an identity, and it no longer
-//! knows what GitHub is or who is allowed in.
 
 use axum::body::Body;
 use axum::extract::{Query, State};
@@ -32,11 +26,22 @@ fn random_token() -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
 }
 
-/// Resolve the current dashboard session (opaque cookie → DB lookup).
-pub async fn current_session(state: &AppState, headers: &HeaderMap) -> Option<Session> {
+fn session_id(headers: &HeaderMap) -> Option<&str> {
     let cookies = headers.get(header::COOKIE)?.to_str().ok()?;
-    let id = cookie::read_cookie(cookies, SESSION_COOKIE)?;
-    state.store.get_session(id).await.ok().flatten()
+    cookie::read_cookie(cookies, SESSION_COOKIE)
+}
+
+/// The signed-in session, if any. A store that cannot answer is an error, not
+/// a signed-out user.
+pub async fn current_session(state: &AppState, headers: &HeaderMap) -> AppResult<Option<Session>> {
+    match session_id(headers) {
+        Some(id) => state
+            .store
+            .get_session(id)
+            .await
+            .map_err(AppError::Unavailable),
+        None => Ok(None),
+    }
 }
 
 fn redirect(location: &str, cookies: &[String]) -> Response {
@@ -60,8 +65,7 @@ pub async fn login(State(state): State<AppState>) -> AppResult<Response> {
     let flow_id = state
         .store
         .create_oauth_flow(&csrf, &verifier, OAUTH_FLOW_TTL)
-        .await
-        .map_err(AppError::Internal)?;
+        .await?;
     Ok(redirect(
         &oidc::authorize_url(&state.config, &csrf, &challenge),
         &[cookie::set_cookie(OAUTH_COOKIE, &flow_id, OAUTH_FLOW_TTL)],
@@ -69,14 +73,15 @@ pub async fn login(State(state): State<AppState>) -> AppResult<Response> {
 }
 
 pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if let Some(cookies) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok())
-        && let Some(id) = cookie::read_cookie(cookies, SESSION_COOKIE)
+    if let Some(id) = session_id(&headers)
+        && let Err(e) = state.store.delete_session(id).await
     {
-        let _ = state.store.delete_session(id).await;
+        tracing::warn!(
+            error = format!("{e:#}"),
+            "deleting a session at logout failed"
+        );
     }
-    // Only this gateway's session. The issuer's is its own, and ending it for
-    // every other service because somebody left this dashboard would be a
-    // surprise rather than a courtesy.
+    // Only this gateway's session; the issuer's serves other relying parties.
     redirect("/", &[cookie::clear_cookie(SESSION_COOKIE)])
 }
 
@@ -91,8 +96,7 @@ pub async fn callback(
     headers: HeaderMap,
     Query(q): Query<Callback>,
 ) -> AppResult<Response> {
-    // Recover and consume the one-shot flow row: a replayed callback finds
-    // nothing rather than a second usable flow.
+    // Consumed on read, so a replayed callback finds nothing.
     let flow_id = headers
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())
@@ -101,27 +105,22 @@ pub async fn callback(
     let flow = state
         .store
         .take_oauth_flow(flow_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::Unauthorized)?;
 
     if flow.csrf != q.state {
         return Err(AppError::BadRequest("state mismatch".into()));
     }
 
-    // No allowlist check here any more. A token issues only to somebody the
-    // provider admitted, so reaching this point with a valid code *is* the
-    // check — and a second copy of the list here is a second thing to keep in
-    // step and a second way to lock somebody out.
+    // Who may sign in is the login provider's decision; a valid code is it.
     let identity = oidc::exchange_code(&state.config, &state.http, &q.code, &flow.verifier)
         .await
-        .map_err(|e| AppError::Upstream(e.to_string()))?;
+        .map_err(AppError::Upstream)?;
 
     let session_id = state
         .store
         .create_session(&identity.subject, &identity.login, SESSION_TTL)
-        .await
-        .map_err(AppError::Internal)?;
+        .await?;
 
     Ok(redirect(
         "/dashboard",

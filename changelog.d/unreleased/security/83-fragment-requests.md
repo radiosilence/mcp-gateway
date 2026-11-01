@@ -1,0 +1,1 @@
+- **Dashboard requests require Datastar's request header, and sign-out is a POST.** `SameSite=Lax` lets sibling subdomains submit forms with the session cookie; a cross-site form cannot set `Datastar-Request`, so requests without it are refused. Sign-out no longer happens on a GET that any page could trigger.

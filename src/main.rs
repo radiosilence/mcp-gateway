@@ -39,26 +39,14 @@ use crate::crypto::Cipher;
 use crate::state::AppState;
 use crate::store::Store;
 
-/// The build serving these pages, shown in the footer of each one.
-///
-/// `Cargo.toml`'s version is what a release is here, so this is the same string
-/// the image tag and the GitHub release carry — which is the point: neither of
-/// those is visible from a browser, and "which build am I looking at" is the
-/// first question a dashboard behaving oddly raises.
+/// Shown in each page's footer; the same string as the image tag and release.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Baked into the binary rather than fetched from a CDN. These pages sit behind
-/// the login of a service that holds people's credentials, and they are typed
-/// into it in plaintext — a third-party script with DOM access there reads them
-/// as they are entered. Embedding also keeps the deployment a single artefact,
-/// with no second thing to serve or keep in step.
+/// Embedded rather than loaded from a CDN: credentials are typed into these
+/// pages, so no third-party script gets DOM access to them.
 const APP_CSS: &str = include_str!("../assets/app.css");
+/// `web/app.ts` and the vendored Datastar, bundled (`mise run web`).
 const APP_JS: &str = include_str!("../assets/app.js");
-/// Vendored rather than fetched: same reasoning as the rest, and a pinned copy
-/// in the tree is also the only version anyone can be served. The same v1.0.2
-/// build mariastew carries, so the two cannot drift onto different semantics
-/// for the same attribute.
-const DATASTAR_JS: &str = include_str!("../assets/datastar.js");
 
 async fn app_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
@@ -71,26 +59,13 @@ async fn app_js() -> impl IntoResponse {
     )
 }
 
-/// Everything the pages need comes from this origin, so the policy can simply
-/// say so. No `unsafe-inline` anywhere: the stylesheet and script are served as
-/// files and no handler is written into the markup, which is the whole reason
-/// they were moved out. `data:` covers the inline SVG favicon.
+/// Everything comes from this origin and nothing is inline; `data:` covers the
+/// SVG favicon.
 ///
-/// `unsafe-eval` is Datastar's price, and is not optional: it compiles each
-/// `data-*` expression with `Function()`, so without it no attribute on this
-/// page does anything. Serving the bundle ourselves does not change that — eval
-/// is about turning strings into code, not about where the file came from.
-///
-/// What it costs is worth stating plainly, because this is the page people type
-/// their credentials into. `script-src 'self'` still refuses script from
-/// anywhere else, so nothing new can be *loaded*. What changes is that a
-/// `data-*` attribute built from an unescaped value would be executable, and
-/// this line would no longer be what stopped it. Askama escapes by default and
-/// nothing here opts out; `no_template_opts_out_of_escaping` is the control that
-/// used to have this as a backstop and now stands on its own.
-///
-/// Shared verbatim with mariastew, which reached the same policy from the other
-/// direction — it served no headers at all until this comparison was made.
+/// `unsafe-eval` is required by Datastar, which compiles each `data-*`
+/// expression with `Function()`. It means a `data-*` attribute rendered from an
+/// unescaped value would execute, so escaping is the control:
+/// `no_template_opts_out_of_escaping` guards it.
 const CSP: &str = "default-src 'self'; \
      script-src 'self' 'unsafe-eval'; \
      style-src 'self'; \
@@ -101,8 +76,7 @@ const CSP: &str = "default-src 'self'; \
      base-uri 'none'; \
      object-src 'none'";
 
-/// Applied to every response. Harmless on the JSON and SSE the proxy returns,
-/// and cheaper to reason about than deciding per route which ones render HTML.
+/// Applied to every response, including the proxy's, which they do not affect.
 async fn security_headers(request: axum::extract::Request, next: middleware::Next) -> Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
@@ -118,16 +92,8 @@ async fn security_headers(request: axum::extract::Request, next: middleware::Nex
         header::REFERRER_POLICY,
         HeaderValue::from_static("no-referrer"),
     );
-    // Redundant beside frame-ancestors for anything current, and free.
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     response
-}
-
-async fn datastar_js() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        DATASTAR_JS,
-    )
 }
 
 #[tokio::main]
@@ -142,8 +108,7 @@ async fn main() -> Result<()> {
     let mut config = Config::from_env()?;
     let bind_addr = config.bind_addr.clone();
 
-    // Config is cloned into every handler's state and the cipher is all that
-    // needs the key, so it is not kept there. The freed buffer is not wiped.
+    // Only the cipher needs the key, so it is not kept in the shared config.
     let cipher = Cipher::new(&std::mem::take(&mut config.token_enc_key))?;
     let store = Store::connect(&config.database_url, cipher).await?;
     store.migrate().await?;
@@ -157,15 +122,12 @@ async fn main() -> Result<()> {
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
 
-    // reqwest's total timeout covers the body as well, so it cannot be used
-    // here. The read timeout resets on every chunk: a stream carrying traffic
-    // lives as long as it likes, an idle notification stream is closed and the
-    // client reconnects, and a backend that accepts and never answers is
-    // bounded. It is long because a tool call answered as plain JSON sends
-    // nothing until it has finished.
+    // A total timeout would cut SSE streams, so the proxy uses a read timeout,
+    // which resets on every chunk. It is long because a tool call answered as
+    // plain JSON sends nothing until it has finished.
     //
-    // Redirects are relayed to the client rather than followed: following one
-    // would send the injected credentials to whichever host it names.
+    // Redirects are relayed rather than followed: following one would send the
+    // injected credentials to whichever host it names.
     let proxy_http = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(300))
@@ -182,10 +144,8 @@ async fn main() -> Result<()> {
         hydra,
     };
 
-    // Rate limiting: only on the abuse-prone entry point — the bounce out to
-    // the issuer and back — keyed on the client IP as seen through Traefik
-    // (X-Forwarded-For / X-Real-IP), never the proxy peer address. The MCP
-    // proxy routes and /healthz are deliberately left unthrottled.
+    // Only the login round trip is rate limited, keyed on the client IP from
+    // the ingress's forwarding headers. `/login` writes a row per request.
     let auth_governor = GovernorConfigBuilder::default()
         .per_second(2)
         .burst_size(10)
@@ -193,9 +153,7 @@ async fn main() -> Result<()> {
         .finish()
         .expect("valid governor config for auth routes");
 
-    // governor's keyed rate limiter accumulates one entry per client IP;
-    // periodically drop entries with no recent activity so it doesn't grow
-    // unbounded.
+    // The keyed limiter keeps an entry per IP until told to drop idle ones.
     let auth_limiter = auth_governor.limiter().clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -205,9 +163,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Expired sessions and abandoned logins are otherwise never removed, and
-    // `/login` writes a row for anybody who asks. Every replica sweeping is
-    // harmless: the delete is idempotent.
+    // Every replica sweeping is harmless: the delete is idempotent.
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3_600));
         loop {
@@ -228,8 +184,7 @@ async fn main() -> Result<()> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
-        .route("/assets/datastar.js", get(datastar_js))
-        .route("/logout", get(auth::routes::logout))
+        .route("/logout", post(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
         .route("/dashboard/{mcp_id}/token", post(dashboard::set_credential))
         .route("/dashboard/{mcp_id}/status", get(dashboard::mcp_status))
@@ -253,8 +208,7 @@ async fn main() -> Result<()> {
             "/.well-known/oauth-protected-resource/{id}",
             get(well_known::protected_resource_for),
         )
-        // MCPs live at the root (`/fastmail`); a reserved-id guard at config
-        // load keeps them from shadowing the gateway's own routes above.
+        // MCPs live at the root; config rejects ids that shadow routes above.
         .route("/{id}", any(proxy::handle))
         .merge(auth_routes)
         .layer(middleware::from_fn(security_headers))
@@ -275,11 +229,9 @@ async fn main() -> Result<()> {
     .into_future();
     tokio::pin!(server);
 
-    // An open SSE stream never finishes on its own, so waiting for every
-    // connection to drain would wait out the orchestrator's grace period and
-    // end in SIGKILL anyway. Requests that can finish get a few seconds; then
-    // main returns, and dropping the runtime cancels the connections still
-    // running, since each is its own task.
+    // An open SSE stream never finishes, so draining every connection would
+    // wait out the orchestrator's grace period. Requests get a few seconds,
+    // then returning drops the runtime and cancels what is left.
     tokio::select! {
         result = &mut server => result?,
         _ = async {
@@ -292,9 +244,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// SIGTERM is how the orchestrator stops a pod. The binary is PID 1 in a
-/// scratch image, and the kernel ignores SIGTERM for PID 1 unless it installs a
-/// handler, so without this every stop waits for SIGKILL.
+/// The binary is PID 1 in a scratch image, where the kernel ignores SIGTERM
+/// unless a handler is installed.
 async fn shutdown_signal() {
     let terminate = async {
         match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
@@ -318,11 +269,6 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
 
-    /// The stylesheet is generated, so the thing worth guarding is that a real
-    /// one got committed — an empty or truncated build would still compile in
-    /// and only show up as an unstyled page in production.
-    /// The policy is only worth anything while it has no inline escape hatch —
-    /// which is exactly what someone adds to make a stray inline script work.
     #[tokio::test]
     async fn every_response_carries_the_security_headers() {
         use axum::body::Body;
@@ -346,10 +292,6 @@ mod tests {
             !csp.contains("unsafe-inline"),
             "csp has an inline escape hatch"
         );
-        // Datastar cannot work without the eval hatch, so that one is stated
-        // and argued for above. `unsafe-inline` is the one nothing here needs,
-        // and it is what someone reaches for to make a stray inline handler
-        // work — which is exactly the change this should refuse.
         assert!(
             csp.contains("'unsafe-eval'"),
             "datastar needs the eval hatch"
@@ -359,45 +301,49 @@ mod tests {
         assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
     }
 
+    /// Plugin names the bundle registers, whichever quote the minifier chose.
+    fn registered_plugins() -> Vec<&'static str> {
+        let names: Vec<&str> = APP_JS
+            .match_indices("name:")
+            .filter_map(|(i, m)| {
+                let rest = &APP_JS[i + m.len()..];
+                let quote = rest
+                    .chars()
+                    .next()
+                    .filter(|c| matches!(c, '"' | '\'' | '`'))?;
+                let rest = &rest[1..];
+                rest.find(quote).map(|end| &rest[..end])
+            })
+            .collect();
+        assert!(!names.is_empty(), "found no plugin names in the bundle");
+        names
+    }
+
+    /// The generated assets are committed; a truncated build would still
+    /// compile and only show up as a broken page.
     #[test]
     fn the_embedded_assets_are_real() {
         assert!(APP_CSS.contains("box-sizing:border-box"), "no preflight");
         assert!(APP_CSS.contains("max-w-2xl"), "utilities missing");
         assert!(
-            APP_JS.contains("data-copy"),
-            "app.js is not the real script"
-        );
-        assert!(
-            DATASTAR_JS.starts_with("// Datastar v1.0.2"),
-            "not the pinned datastar build"
+            APP_JS.contains("datastar-fetch") && registered_plugins().contains(&"copy"),
+            "app.js is not the bundle"
         );
     }
 
-    /// Datastar's own triggers are hyphenated (`data-on-interval`) and DOM
-    /// events are not (`data-on:click`). Getting that backwards is not an
-    /// error: the attribute matches no plugin, so the control renders, looks
-    /// right, and does nothing. `data-on-load` is the trap this migration was
-    /// one keystroke from — there is no `load` plugin at all, only `init`.
-    ///
-    /// The names are read out of the vendored bundle rather than copied from
-    /// documentation, so a version bump that renames or drops one fails here
-    /// rather than in a browser.
+    /// An attribute naming no Datastar plugin is ignored silently (there is no
+    /// `data-on-load`, only `data-init`). Names come from the vendored bundle,
+    /// so an upgrade that renames one fails here.
     #[test]
     fn every_datastar_attribute_is_one_datastar_matches() {
-        let registered: Vec<&str> = DATASTAR_JS
-            .match_indices("name:\"")
-            .filter_map(|(i, m)| {
-                let rest = &DATASTAR_JS[i + m.len()..];
-                rest.find('"').map(|end| &rest[..end])
-            })
-            .collect();
+        let registered = registered_plugins();
         assert!(
             registered.contains(&"init") && registered.contains(&"on"),
             "the bundle registers neither `init` nor `on`; the scan is wrong, not the templates"
         );
 
-        // Ours, read by app.js. Datastar ignores it and so should this.
-        const OURS: &[&str] = &["copy"];
+        // Read by expressions; Datastar ignores them.
+        const OURS: &[&str] = &["confirm", "url"];
 
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         for entry in std::fs::read_dir(&dir).expect("templates/") {
@@ -424,16 +370,8 @@ mod tests {
         }
     }
 
-    /// With eval allowed, escaping is the only thing between a string that
-    /// reaches the DOM and code that runs: Datastar compiles `data-*`
-    /// attributes, so an unescaped value rendered into one is executable by
-    /// design. Backends supply strings this page renders — option labels and
-    /// values, and the error text a failed lookup shows — so this is not
-    /// hypothetical.
-    ///
-    /// Askama escapes by default. What needs watching is the opt-outs, and
-    /// there are none: a `|safe` here would have to be argued for, and this is
-    /// where the argument gets made.
+    /// With eval allowed, escaping is what keeps backend-supplied strings (option
+    /// labels, error text) from executing. See `CSP`.
     #[test]
     fn no_template_opts_out_of_escaping() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");

@@ -1,0 +1,1 @@
+- **The dashboard login no longer asks for `offline_access`.** The gateway discarded the refresh token, so Hydra was minting and storing one per sign-in for nothing.

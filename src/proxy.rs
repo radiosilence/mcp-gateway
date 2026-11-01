@@ -1,22 +1,21 @@
-//! Streaming reverse proxy: `/mcp/{id}` → the backend MCP for `{id}`.
+//! Streaming reverse proxy: `/{id}` → the backend MCP for `{id}`.
 //!
-//! Per request: introspect the bearer at Hydra → `sub`, look up + decrypt the
-//! user's credentials for this MCP, strip any client-supplied copy of those
-//! headers, inject the real ones, forward, and stream the response back
-//! (MCP streamable-HTTP responses can be SSE, so the body is streamed, not
-//! buffered).
+//! Per request: introspect the bearer at Hydra to get the subject, decrypt the
+//! subject's credentials for this MCP, replace any client-supplied copy of
+//! those headers with the stored values, forward, and stream the response back
+//! (streamable-HTTP responses can be SSE).
 //!
-//! No valid bearer ⇒ 401 + RFC 9728 `WWW-Authenticate`, which starts Claude's
-//! OAuth dance.
+//! No valid bearer gets a 401 with an RFC 9728 `WWW-Authenticate`, which is
+//! what starts a client's OAuth flow.
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 
 use crate::state::AppState;
 
-const HOP_BY_HOP: [&str; 8] = [
+pub const HOP_BY_HOP: [&str; 8] = [
     "connection",
     "keep-alive",
     "proxy-authenticate",
@@ -31,6 +30,7 @@ pub async fn handle(
     State(state): State<AppState>,
     Path(id): Path<String>,
     method: Method,
+    uri: Uri,
     mut headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -38,85 +38,84 @@ pub async fn handle(
         return (StatusCode::NOT_FOUND, "unknown mcp").into_response();
     };
 
-    // Authenticate: opaque bearer → introspect → subject.
-    let Some(token) = bearer(&headers) else {
+    let Some(token) = bearer(&headers).map(str::to_owned) else {
         return challenge(&state, &id);
     };
     let sub = match state.hydra.introspect(&token).await {
         Ok(Some(sub)) => sub,
         Ok(None) => return challenge(&state, &id),
+        // A 401 would send the client back through OAuth for an outage that a
+        // new token cannot fix.
         Err(e) => {
-            tracing::warn!(error = format!("{e:#}"), "token check failed");
-            return challenge(&state, &id);
+            tracing::error!(error = format!("{e:#}"), "token introspection failed");
+            return unavailable("authorization server unavailable");
         }
     };
 
-    // Forward headers minus hop-by-hop, auth, host, length — and critically
-    // every credential header this MCP uses, so a client can't smuggle its own.
+    let credentials = match mcp.public {
+        true => None,
+        false => match state
+            .store
+            .get_credentials(&sub, &id, mcp.primary_field())
+            .await
+        {
+            Ok(credentials) => credentials,
+            Err(e) => {
+                tracing::error!(error = format!("{e:#}"), mcp = %id, "credential lookup failed");
+                return unavailable("credential store unavailable");
+            }
+        },
+    };
+    if credentials.is_none() && !mcp.public {
+        // Forwarded anyway: the backend answers with its own "not configured"
+        // error, which the model can relay to the user.
+        tracing::debug!(%sub, mcp = %id, "no credential stored");
+    }
+
+    // The session cookie must not reach backends, and a backend's Set-Cookie
+    // must not land on the gateway's origin; MCP sessions use `mcp-session-id`.
     headers.remove(header::AUTHORIZATION);
     headers.remove(header::HOST);
     headers.remove(header::CONTENT_LENGTH);
-    // The gateway's own session cookie would otherwise reach every backend,
-    // and a backend's Set-Cookie would land on the gateway's origin. MCP
-    // sessions travel in `mcp-session-id`, so neither needs to cross.
     headers.remove(header::COOKIE);
-    for field in &mcp.fields {
-        headers.remove(field.header.as_str());
-    }
     for h in HOP_BY_HOP {
         headers.remove(h);
     }
-
-    let mut req = state
-        .proxy_http
-        .request(method, &mcp.backend)
-        .headers(headers)
-        .body(body);
-
-    // Inject the user's credentials for this MCP (absent is not fatal — the
-    // backend returns its own "not configured" error the model can relay).
-    //
-    // A public MCP stores nothing, so the lookup is skipped rather than left to
-    // return `None` — a credential-less backend should never touch the
-    // credential store at all.
-    match match mcp.is_public() {
-        true => Ok(None),
-        false => {
-            state
-                .store
-                .get_credentials(&sub, &id, mcp.primary_field())
-                .await
-        }
-    } {
-        Ok(Some(values)) => {
-            for field in &mcp.fields {
-                let Some(value) = values.get(&field.id).filter(|v| !v.is_empty()) else {
-                    continue;
-                };
-                // Header names are validated at config load; values come from
-                // user input, so a bad one is skipped rather than failing the
-                // whole request with a confusing transport error.
-                match header::HeaderValue::from_str(value) {
-                    Ok(mut v) => {
-                        // Redacted from Debug output and never added to an
-                        // HTTP/2 header compression table.
-                        v.set_sensitive(true);
-                        req = req.header(field.header.as_str(), v);
-                    }
-                    Err(_) => tracing::warn!(
-                        mcp = %id,
-                        field = %field.id,
-                        "stored credential is not a valid header value; skipping"
-                    ),
-                }
+    for field in &mcp.fields {
+        headers.remove(&field.header);
+        let Some(value) = credentials
+            .as_ref()
+            .and_then(|c| c.get(&field.id))
+            .filter(|v| !v.is_empty())
+        else {
+            continue;
+        };
+        match HeaderValue::from_str(value) {
+            Ok(mut v) => {
+                v.set_sensitive(true);
+                headers.insert(field.header.clone(), v);
             }
+            Err(_) => tracing::warn!(
+                mcp = %id,
+                field = %field.id,
+                "stored credential is not a valid header value; skipping"
+            ),
         }
-        Ok(None) if !mcp.is_public() => tracing::debug!(%sub, mcp = %id, "no credential stored"),
-        Ok(None) => {}
-        Err(e) => tracing::error!(error = %e, "credential lookup failed"),
     }
 
-    let mut upstream = match req.send().await {
+    let url = match uri.query() {
+        Some(query) if mcp.backend.contains('?') => format!("{}&{query}", mcp.backend),
+        Some(query) => format!("{}?{query}", mcp.backend),
+        None => mcp.backend.clone(),
+    };
+    let mut upstream = match state
+        .proxy_http
+        .request(method, url)
+        .headers(headers)
+        .body(body)
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, mcp = %id, "backend request failed");
@@ -124,9 +123,7 @@ pub async fn handle(
         }
     };
 
-    // Relay status + headers, stream the body (SSE-safe).
-    let status =
-        StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let status = upstream.status();
     let mut resp_headers = std::mem::take(upstream.headers_mut());
     resp_headers.remove(header::CONTENT_LENGTH);
     resp_headers.remove(header::SET_COOKIE);
@@ -140,13 +137,12 @@ pub async fn handle(
     out
 }
 
-fn bearer(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get(header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
-        .map(str::to_owned)
+/// The auth scheme is case-insensitive (RFC 9110 §11.1).
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    let token = token.trim();
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
 }
 
 fn challenge(state: &AppState, id: &str) -> Response {
@@ -159,4 +155,31 @@ fn challenge(state: &AppState, id: &str) -> Response {
         )],
     )
         .into_response()
+}
+
+fn unavailable(message: &'static str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, "5")],
+        message,
+    )
+        .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn auth(value: &str) -> HeaderMap {
+        HeaderMap::from_iter([(header::AUTHORIZATION, HeaderValue::from_str(value).unwrap())])
+    }
+
+    #[test]
+    fn reads_the_bearer_token_whatever_the_scheme_case() {
+        assert_eq!(bearer(&auth("Bearer abc")), Some("abc"));
+        assert_eq!(bearer(&auth("bearer abc")), Some("abc"));
+        assert_eq!(bearer(&auth("Basic abc")), None);
+        assert_eq!(bearer(&auth("Bearer ")), None);
+        assert_eq!(bearer(&HeaderMap::new()), None);
+    }
 }

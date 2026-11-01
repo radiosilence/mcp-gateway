@@ -1,9 +1,12 @@
 import * as z from "zod";
 import { ResourcesSchema } from "./contract.ts";
 
+/** The gateway writes ids into URLs and element ids, and refuses others at startup. */
+const Slug = z.string().regex(/^[A-Za-z0-9_-]+$/, "use letters, digits, - and _");
+
 /** One value a backend MCP needs from the user, injected into its own header. */
 export const McpCredentialFieldSchema = z.object({
-  id: z.string(),
+  id: Slug,
   label: z.string(),
   header: z.string(),
   secret: z.boolean().optional(),
@@ -35,7 +38,7 @@ export const McpCredentialFieldSchema = z.object({
  */
 export const McpSchema = z
   .object({
-    id: z.string(),
+    id: Slug,
     name: z.string(),
     /** The gateway deploys this image as the backend. */
     image: z.string().optional(),
@@ -124,5 +127,10 @@ export const McpGatewayConfSchema = z.object({
    * away from it.
    */
   node: z.string().optional(),
-  mcps: z.array(McpSchema).default([]),
+  mcps: z
+    .array(McpSchema)
+    .default([])
+    .refine((mcps) => new Set(mcps.map((m) => m.id)).size === mcps.length, {
+      message: "MCP ids must be unique",
+    }),
 });

@@ -261,7 +261,7 @@ async fn rpc_result(response: reqwest::Response, id: u64) -> Result<Value> {
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.starts_with("text/event-stream"));
+        .is_some_and(|v| v.to_ascii_lowercase().starts_with("text/event-stream"));
 
     let reply = match is_sse {
         false => serde_json::from_slice(&read_capped(response).await?)

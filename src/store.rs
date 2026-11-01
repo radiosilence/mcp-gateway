@@ -260,9 +260,9 @@ impl Store {
 
     /// Replace `old` with `plain` sealed to its row, only if the row still
     /// holds `old`: a save that landed in between wins.
-    async fn reseal(&self, sub: &str, mcp_id: &str, old: &str, plain: &str) -> Result<()> {
+    async fn reseal(&self, sub: &str, mcp_id: &str, old: &str, plain: &str) -> Result<bool> {
         let sealed = self.cipher.seal(plain, &row_binding(sub, mcp_id))?;
-        sqlx::query(
+        let done = sqlx::query(
             "UPDATE credentials SET enc_secret = $4 WHERE sub = $1 AND mcp_id = $2 AND enc_secret = $3",
         )
         .bind(sub)
@@ -271,12 +271,12 @@ impl Store {
         .bind(sealed)
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(done.rows_affected() == 1)
     }
 
-    /// Reseal every credential stored before row binding. Run at startup; a
-    /// row that will not open is counted and left alone rather than stopping
-    /// the gateway.
+    /// Reseal every credential stored before row binding, at startup and
+    /// hourly. Neither a row that will not open nor a failed update stops the
+    /// gateway.
     pub async fn reseal_legacy(&self) -> Result<()> {
         let rows = sqlx::query(
             "SELECT sub, mcp_id, enc_secret FROM credentials WHERE enc_secret NOT LIKE 'v2.%'",
@@ -287,19 +287,27 @@ impl Store {
         for row in rows {
             let (sub, mcp_id, sealed): (String, String, String) =
                 (row.get("sub"), row.get("mcp_id"), row.get("enc_secret"));
-            match self.cipher.open(&sealed, &row_binding(&sub, &mcp_id)) {
-                Ok(opened) => {
-                    self.reseal(&sub, &mcp_id, &sealed, &opened.plain).await?;
-                    resealed += 1;
-                }
-                Err(_) => unreadable += 1,
+            let Ok(opened) = self.cipher.open(&sealed, &row_binding(&sub, &mcp_id)) else {
+                unreadable += 1;
+                continue;
+            };
+            match self.reseal(&sub, &mcp_id, &sealed, &opened.plain).await {
+                Ok(true) => resealed += 1,
+                Ok(false) => {}
+                Err(e) => tracing::warn!(
+                    error = format!("{e:#}"),
+                    mcp = %mcp_id,
+                    "resealing a credential failed"
+                ),
             }
         }
-        if resealed + unreadable > 0 {
-            tracing::info!(
-                resealed,
+        if resealed > 0 {
+            tracing::info!(resealed, "bound legacy credentials to their rows");
+        }
+        if unreadable > 0 {
+            tracing::warn!(
                 unreadable,
-                "bound legacy credentials to their rows"
+                "stored credentials that will not open with this key"
             );
         }
         Ok(())

@@ -1,8 +1,6 @@
-//! Dashboard: log in with our OAuth (GitHub upstream), then manage the
-//! credentials for each registered MCP. An MCP declares the fields it needs
-//! (one for a bearer token, three for CalDAV), and the form is built from
-//! those. Mutations answer with the section they changed, so the page never
-//! reloads and there is no flash to carry across one.
+//! Dashboard: manage the credentials for each registered MCP. An MCP declares
+//! the fields it needs and the form is built from those. Mutations answer with
+//! the section they changed, which Datastar morphs into the page.
 
 use askama::Template;
 use axum::extract::{Form, Path, State};
@@ -16,70 +14,75 @@ mod view;
 
 use view::*;
 
-use options::{fetch_choices, options_fragment, verify};
+use options::{fetch_choices, options_template, verify};
 
 use crate::auth::extract::{FragmentSession, PageSession};
 use crate::auth::routes::current_session;
-use crate::config::Mcp;
+use crate::config::{CredentialField, Mcp};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::{CredentialSet, Session};
 
-/// Re-render one MCP's section, which is the answer to every mutation on it:
-/// the badge, the timestamp and the settings all come from one place, so they
-/// cannot disagree about what just happened.
+fn mcp<'a>(state: &'a AppState, id: &str) -> AppResult<&'a Mcp> {
+    state.config.mcp(id).ok_or(AppError::NotFound)
+}
+
+/// One MCP's section, re-read from the store: the answer to every mutation.
 async fn section(
     state: &AppState,
     session: &Session,
     mcp: &Mcp,
     notice: Notice,
 ) -> AppResult<Response> {
-    let mut view = McpView::build(state, session, mcp).await?;
+    let stored = state
+        .store
+        .get_credentials_with_meta(&session.sub, &mcp.id, mcp.primary_field())
+        .await?;
+    let mut view = McpView::new(&state.config, mcp, stored);
     view.notice = notice;
     Ok(render(McpSectionTemplate { m: view }))
 }
 
-pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if current_session(&state, &headers).await.is_some() {
-        return Redirect::to("/dashboard").into_response();
+pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Response> {
+    if current_session(&state, &headers).await?.is_some() {
+        return Ok(Redirect::to("/dashboard").into_response());
     }
-    match IndexTemplate.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => AppError::Internal(e.into()).into_response(),
-    }
+    Ok(Html(IndexTemplate.render().map_err(anyhow::Error::from)?).into_response())
 }
 
-/// The page, built entirely from our own database. Every backend it names is
-/// asked about afterwards, by the browser, over htmx — so what this costs is a
-/// handful of local queries and it cannot be held open by somebody else's
-/// calendar server.
+/// Built from the gateway's own database only. Anything that has to ask a
+/// backend is fetched by the browser once the page is up, so a slow backend
+/// cannot hold the page.
 pub async fn dashboard(
     State(state): State<AppState>,
     PageSession(session): PageSession,
 ) -> AppResult<Response> {
-    let mut mcps = Vec::new();
-    for m in &state.config.mcps {
-        mcps.push(McpView::build(&state, &session, m).await?);
-    }
-
-    let tpl = DashboardTemplate {
+    let mut stored = state
+        .store
+        .credentials_for(&session.sub, &state.config.mcps)
+        .await?;
+    let mcps = state
+        .config
+        .mcps
+        .iter()
+        .map(|m| McpView::new(&state.config, m, stored.remove(&m.id)))
+        .collect();
+    let html = DashboardTemplate {
         login: session.login,
         mcps,
-    };
-    let html = tpl.render().map_err(|e| AppError::Internal(e.into()))?;
+    }
+    .render()
+    .map_err(anyhow::Error::from)?;
     Ok(Html(html).into_response())
 }
 
 pub async fn set_credential(
     State(state): State<AppState>,
-    PageSession(session): PageSession,
+    FragmentSession(session): FragmentSession,
     Path(mcp_id): Path<String>,
     Form(form): Form<CredentialForm>,
 ) -> AppResult<Response> {
-    let Some(mcp) = state.config.mcp(&mcp_id) else {
-        return Err(AppError::BadRequest("unknown mcp".into()));
-    };
-
+    let mcp = mcp(&state, &mcp_id)?;
     let saved = state
         .store
         .update_credentials(&session.sub, &mcp_id, mcp.primary_field(), |stored| {
@@ -93,37 +96,21 @@ pub async fn set_credential(
             }
             Ok::<_, String>(values)
         })
-        .await
-        .map_err(AppError::Internal)?;
-    let (stored, values) = match saved {
-        Ok(saved) => saved,
-        Err(complaint) => {
-            return section(&state, &session, mcp, Notice::wrong(complaint)).await;
-        }
+        .await?;
+    let notice = match saved {
+        Err(complaint) => Notice::wrong(complaint),
+        Ok((stored, values)) => match sync_upstream(&state, mcp, &values, stored.as_ref()).await {
+            None => Notice::said("Saved"),
+            // Stored either way: the proxy injects our value regardless.
+            Some(complaint) => Notice::wrong(format!("Saved. {complaint}")),
+        },
     };
-
-    match sync_upstream(&state, mcp, &values, stored.as_ref()).await {
-        None => section(&state, &session, mcp, Notice::said("Saved")).await,
-        // Stored either way — the proxy injects our value on every request, so
-        // the gateway behaves as asked whatever the backend thinks of it.
-        Some(complaint) => {
-            section(
-                &state,
-                &session,
-                mcp,
-                Notice::wrong(format!("Saved. {complaint}")),
-            )
-            .await
-        }
-    }
+    section(&state, &session, mcp, notice).await
 }
 
 /// Tell the backend what the user picked, for fields that declare a
-/// `sync_mutation` — so a calendar chosen here is also the one their phone
-/// uses. Returns what to tell the user when a backend wouldn't take it.
-///
-/// Only for values that actually changed: saving the form again shouldn't
-/// re-issue a write to someone's account.
+/// `sync_mutation`, but only for values that changed. Returns what to tell the
+/// user when a backend refused.
 async fn sync_upstream(
     state: &AppState,
     mcp: &Mcp,
@@ -140,8 +127,6 @@ async fn sync_upstream(
         if stored.and_then(|s| s.get(&field.id)) == Some(value) {
             continue;
         }
-        // Passed as a variable, never interpolated: a calendar named `"` would
-        // otherwise rewrite the mutation.
         let variables = json!({ "value": value });
         let refusal =
             match crate::backend::graphql(state, mcp, values, mutation, Some(variables)).await {
@@ -159,12 +144,8 @@ async fn sync_upstream(
     None
 }
 
-/// Why a sync mutation didn't take, if it didn't.
-///
-/// A backend that declines an otherwise valid write answers with a payload
-/// saying so rather than a GraphQL error — `caldav-cli` returns
-/// `{ success: false, error }` for a server with nowhere to keep the property.
-/// So a mutation used for syncing has to surface those two fields.
+/// Why a sync mutation didn't take, if it didn't. A backend that declines a
+/// valid write answers `{ success: false, error }` rather than a GraphQL error.
 fn refused(data: &Value) -> Option<String> {
     let payload = data.as_object()?.values().next()?;
     match payload.get("success").and_then(Value::as_bool) {
@@ -184,15 +165,13 @@ pub struct FieldUpdate {
     value: String,
 }
 
-/// What to store for one field, given what the form sent and what we already
-/// hold. `Ok(None)` stores nothing; `Err` is the complaint to show the user.
+/// What to store for one field, given what the form sent and what is stored.
+/// `Ok(None)` stores nothing; `Err` is the complaint to show the user.
 ///
-/// The distinction that matters is absent versus empty. A field the form never
-/// carried — the calendar picker saves itself, so it isn't in the credential
-/// form — must keep its stored value; treating that as "cleared" would wipe it
-/// on every unrelated save.
+/// Absent and empty differ: a field the form never carried (a setting saved on
+/// its own) keeps its stored value.
 fn resolve_field(
-    field: &crate::config::CredentialField,
+    field: &CredentialField,
     submitted: Option<&str>,
     stored: Option<&str>,
 ) -> Result<Option<String>, String> {
@@ -201,10 +180,9 @@ fn resolve_field(
     };
 
     if !value.is_empty() {
-        // These become header values downstream. Reject control characters
-        // here, where we can tell the user, rather than dropping them silently
-        // at proxy time.
-        if value.chars().any(|c| c.is_control()) {
+        // These become header values, so refuse them here where the user can
+        // be told rather than dropping them at proxy time.
+        if value.chars().any(char::is_control) {
             return Err(format!(
                 "{} contains characters that can't be sent",
                 field.label
@@ -213,16 +191,13 @@ fn resolve_field(
         return Ok(Some(value.to_string()));
     }
 
-    // A blank secret means "leave it alone" — it is never rendered back, so the
-    // user couldn't have retyped it to change one of the other fields. A blank
-    // non-secret was visibly cleared on purpose.
+    // A secret is never rendered back, so blank means "keep it". A blank
+    // non-secret was visibly cleared.
     if field.secret
         && let Some(prev) = stored.filter(|p| !p.is_empty())
     {
         return Ok(Some(prev.to_string()));
     }
-    // An optional field left blank falls back to the configured default, if
-    // there is one, and is otherwise simply not stored.
     match (field.required, field.default.as_deref()) {
         (true, _) => Err(format!("{} cannot be empty", field.label)),
         (false, Some(default)) => Ok(Some(default.to_string())),
@@ -230,82 +205,79 @@ fn resolve_field(
     }
 }
 
-/// Patch one field, then sync it upstream.
-///
-/// A setting is not a credential: changing which calendar new events go to
-/// shouldn't demand the rest of the form back, least of all a password the
-/// page never shows. Restricted to non-secret fields for that reason — a
-/// secret can only be set where the user typed it.
+/// Patch one non-secret setting, then sync it upstream. A secret can only be
+/// set through the credential form.
 pub async fn set_field(
     State(state): State<AppState>,
     FragmentSession(session): FragmentSession,
     Path((mcp_id, field_id)): Path<(String, String)>,
     Form(update): Form<FieldUpdate>,
 ) -> AppResult<Response> {
-    let Some(mcp) = state.config.mcp(&mcp_id) else {
-        return Err(AppError::BadRequest("unknown mcp".into()));
-    };
-    let Some(field) = mcp.fields.iter().find(|f| f.id == field_id) else {
-        return Err(AppError::BadRequest("unknown field".into()));
-    };
+    let mcp = mcp(&state, &mcp_id)?;
+    let field = mcp
+        .fields
+        .iter()
+        .find(|f| f.id == field_id)
+        .ok_or(AppError::NotFound)?;
     if field.secret {
         return Err(AppError::BadRequest("not settable on its own".into()));
     }
+    // Datastar discards the body of a non-200 response, so anything the user
+    // should read comes back as a 200 status line.
+    let status = |message: String, bad: bool| {
+        render(FieldStatusTemplate {
+            id: format!("field-status-{mcp_id}-{field_id}"),
+            message,
+            bad,
+        })
+    };
     let value = update.value.trim();
-    if value.chars().any(|c| c.is_control()) {
-        return Err(AppError::BadRequest(
-            "value contains control characters".into(),
+    if value.chars().any(char::is_control) {
+        return Ok(status(
+            format!("{} contains characters that can't be sent", field.label),
+            true,
         ));
     }
 
-    // Merge into what's stored: everything else stays as it was.
-    let (stored, values) = state
+    let saved = state
         .store
         .update_credentials(&session.sub, &mcp_id, mcp.primary_field(), |stored| {
-            let mut values = stored
-                .cloned()
-                .ok_or_else(|| AppError::BadRequest("no credentials stored".into()))?;
+            let mut values = stored.cloned().ok_or("Connect the account first")?;
             match value.is_empty() {
                 true => values.remove(&field_id),
                 false => values.insert(field_id.clone(), value.to_string()),
             };
-            Ok::<_, AppError>(values)
+            Ok::<_, &str>(values)
         })
-        .await
-        .map_err(AppError::Internal)??;
+        .await?;
+    let (stored, values) = match saved {
+        Ok(saved) => saved,
+        Err(complaint) => return Ok(status(complaint.into(), true)),
+    };
 
-    // A backend that refused the change is worth saying out loud; our stored
-    // value is authoritative either way, so the save still stands.
-    let refused = sync_upstream(&state, mcp, &values, stored.as_ref()).await;
-    Ok(status_fragment(
-        format!("field-status-{mcp_id}-{field_id}"),
-        refused.clone().unwrap_or_else(|| "Saved".into()),
-        refused.is_some(),
-    ))
+    Ok(
+        match sync_upstream(&state, mcp, &values, stored.as_ref()).await {
+            Some(refused) => status(refused, true),
+            None => status("Saved".into(), false),
+        },
+    )
 }
 
-/// Suggestions for one field, fetched from the backend with the user's own
-/// credentials — e.g. the calendars this account can write to.
-///
-/// Its own endpoint rather than part of the dashboard render: a backend that is
-/// slow or down must not take the page with it, and the form still works as
-/// free text if this fails.
+/// A setting's choices, fetched from the backend with the user's credentials.
+/// Failure answers with the backend's error text in the control's place, and
+/// the rest of the page is unaffected.
 pub async fn field_options(
     State(state): State<AppState>,
     FragmentSession(session): FragmentSession,
     Path((mcp_id, field_id)): Path<(String, String)>,
 ) -> AppResult<Response> {
-    let Some(mcp) = state.config.mcp(&mcp_id) else {
-        return Err(AppError::BadRequest("unknown mcp".into()));
-    };
-    let Some(query) = mcp
+    let mcp = mcp(&state, &mcp_id)?;
+    let query = mcp
         .fields
         .iter()
         .find(|f| f.id == field_id)
         .and_then(|f| f.options_query.as_deref())
-    else {
-        return Err(AppError::BadRequest("field has no options".into()));
-    };
+        .ok_or(AppError::NotFound)?;
     let started = std::time::Instant::now();
     match fetch_choices(&state, &session.sub, mcp, &field_id, query).await {
         Ok(choices) => {
@@ -313,90 +285,64 @@ pub async fn field_options(
                 mcp = %mcp_id, field = %field_id, ms = started.elapsed().as_millis(),
                 "options loaded"
             );
-            Ok(options_fragment(
+            Ok(render(options_template(
                 &choices.options,
                 &choices.current,
                 &mcp_id,
                 &field_id,
-            ))
+            )))
         }
         Err(e) => {
-            // Wrong password, backend down, a calendar server having a bad day:
-            // the user's own error text is more use than a 500. Returning the
-            // status line rather than options leaves the placeholder in place.
             tracing::debug!(error = %e, mcp = %mcp_id, field = %field_id, "options lookup failed");
             Ok(render(FieldOptionsErrorTemplate {
-                mcp_id: mcp_id.clone(),
-                field_id: field_id.clone(),
+                mcp_id,
+                field_id,
                 error: e.to_string(),
             }))
         }
     }
 }
 
-/// Whether the backend still accepts the credentials we hold, as the badge.
-///
-/// Its own endpoint for the same reason the options are: this is a round trip
-/// to somebody else, and it used to run inside the page render — once per
-/// configured MCP, one after another, bounded only by the HTTP client's 15s
-/// timeout. Two backends having a slow morning was a dashboard that took
-/// seconds to arrive, and a dead one could hold it for half a minute.
+/// Whether the backend accepts the stored credentials, as the badge.
 pub async fn mcp_status(
     State(state): State<AppState>,
     FragmentSession(session): FragmentSession,
     Path(mcp_id): Path<String>,
 ) -> AppResult<Response> {
-    let mcp = mcp_or_404(&state, &mcp_id)?;
+    let mcp = mcp(&state, &mcp_id)?;
+    let stored = state
+        .store
+        .get_credentials_with_meta(&session.sub, &mcp.id, mcp.primary_field())
+        .await?;
     let started = std::time::Instant::now();
-    let verdict = verify(&state, &session.sub, mcp).await;
+    let verdict = verify(&state, mcp, stored.as_ref().map(|(values, _)| values)).await;
     tracing::debug!(
         mcp = %mcp_id, ms = started.elapsed().as_millis(), ?verdict,
         "credentials checked"
     );
-    let view = McpView::build(&state, &session, mcp)
-        .await?
-        .checked(verdict);
+    let view = McpView::new(&state.config, mcp, stored).checked(verdict);
     Ok(render(McpBadgeTemplate { m: view }))
 }
 
-fn status_fragment(id: String, message: String, bad: bool) -> Response {
-    render(FieldStatusTemplate { id, message, bad })
-}
-
-/// A rendering failure here is a bug in a template, not something the user can
-/// act on, so it surfaces as text rather than taking the whole page down.
 pub async fn delete_credential(
     State(state): State<AppState>,
-    PageSession(session): PageSession,
+    FragmentSession(session): FragmentSession,
     Path(mcp_id): Path<String>,
 ) -> AppResult<Response> {
-    state
-        .store
-        .delete_credential(&session.sub, &mcp_id)
-        .await
-        .map_err(AppError::Internal)?;
-    let mcp = mcp_or_404(&state, &mcp_id)?;
+    let mcp = mcp(&state, &mcp_id)?;
+    state.store.delete_credential(&session.sub, &mcp_id).await?;
     section(&state, &session, mcp, Notice::said("Disconnected")).await
 }
 
 #[cfg(test)]
 mod tests {
+    use axum::body::Body;
+    use axum::extract::FromRequest;
+    use axum::http::{Request, header};
 
-    /// Connecting an MCP whose fields are all optional stores no values, and
-    /// must still count as connected — TfL works anonymously, and a key there
-    /// only raises a rate limit. The empty set is the record that you asked
-    /// for it.
-    #[test]
-    fn an_mcp_can_be_connected_while_holding_nothing() {
-        let optional = field("app_key", true, false);
-        assert!(matches!(resolve_field(&optional, Some(""), None), Ok(None)));
-
-        let values = CredentialSet::new();
-        assert!(values.is_empty(), "nothing to store, and that is the point");
-    }
     use super::*;
 
-    fn field(id: &str, secret: bool, required: bool) -> crate::config::CredentialField {
+    fn field(id: &str, secret: bool, required: bool) -> CredentialField {
         serde_json::from_value(json!({
             "id": id, "label": id, "header": format!("X-{id}"),
             "secret": secret, "required": required,
@@ -404,10 +350,22 @@ mod tests {
         .unwrap()
     }
 
+    fn form_request(body: &'static str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(body))
+            .unwrap()
+    }
+
+    #[test]
+    fn an_optional_field_left_blank_stores_nothing() {
+        let optional = field("app_key", true, false);
+        assert_eq!(resolve_field(&optional, Some(""), None), Ok(None));
+    }
+
     #[test]
     fn a_field_the_form_never_carried_keeps_what_is_stored() {
-        // The calendar picker saves itself, so it isn't in the credential form.
-        // Reading absent as "cleared" would wipe it on every unrelated save.
         let setting = field("calendar", false, false);
         assert_eq!(
             resolve_field(&setting, None, Some("home")),
@@ -423,13 +381,11 @@ mod tests {
             resolve_field(&password, Some(""), Some("hunter2")),
             Ok(Some("hunter2".into()))
         );
-        // Nothing stored to keep, and it's required: say so rather than store "".
         assert!(resolve_field(&password, Some(""), None).is_err());
     }
 
     #[test]
     fn a_visibly_cleared_setting_is_cleared() {
-        // Non-secret and present-but-empty: the user emptied a box they could see.
         let setting = field("calendar", false, false);
         assert_eq!(resolve_field(&setting, Some(""), Some("home")), Ok(None));
     }
@@ -450,53 +406,32 @@ mod tests {
         assert!(resolve_field(&setting, Some("we\nird"), None).is_err());
     }
 
-    /// The picker's save, through the same extractor.
     #[tokio::test]
     async fn a_single_field_update_deserializes_from_a_urlencoded_body() {
-        use axum::body::Body;
-        use axum::extract::FromRequest;
-        use axum::http::{Request, header};
-
         for (body, expected) in [("value=home", "home"), ("value=", "")] {
-            let request = Request::builder()
-                .method("POST")
-                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                .body(Body::from(body))
-                .unwrap();
-            let Form(update) = Form::<FieldUpdate>::from_request(request, &())
+            let Form(update) = Form::<FieldUpdate>::from_request(form_request(body), &())
                 .await
                 .expect("a field update must deserialize");
-            // An empty value is how "use the account's own default" arrives.
             assert_eq!(update.value, expected);
         }
     }
 
-    /// The dashboard's own form, through the extractor that rejected it in
-    /// production: a wrapper type here is a 422 on every multi-field save.
+    /// A wrapper type around the map is rejected by the extractor.
     #[tokio::test]
     async fn the_credential_form_deserializes_from_a_urlencoded_body() {
-        use axum::body::Body;
-        use axum::extract::FromRequest;
-        use axum::http::{Request, header};
-
-        let request = Request::builder()
-            .method("POST")
-            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .body(Body::from("username=jc%40blit.cc&password=pw&url="))
-            .unwrap();
-
-        let Form(form) = Form::<CredentialForm>::from_request(request, &())
-            .await
-            .expect("a form body must deserialize");
+        let Form(form) = Form::<CredentialForm>::from_request(
+            form_request("username=jc%40blit.cc&password=pw&url="),
+            &(),
+        )
+        .await
+        .expect("a form body must deserialize");
         assert_eq!(form.get("username").map(String::as_str), Some("jc@blit.cc"));
         assert_eq!(form.get("password").map(String::as_str), Some("pw"));
-        // A cleared optional field arrives as an empty value, not as absent.
         assert_eq!(form.get("url").map(String::as_str), Some(""));
     }
 
     #[test]
     fn a_declined_sync_is_read_out_of_the_payload() {
-        // Not a GraphQL error — the query succeeded, the write didn't.
         let data =
             json!({"setDefaultCalendar": {"success": false, "error": "no scheduling inbox"}});
         assert_eq!(refused(&data).as_deref(), Some("no scheduling inbox"));
@@ -509,7 +444,6 @@ mod tests {
     fn a_sync_that_took_says_nothing() {
         let data = json!({"setDefaultCalendar": {"success": true, "error": null}});
         assert_eq!(refused(&data), None);
-        // A mutation that reports neither field is taken at its word.
         assert_eq!(refused(&json!({"setDefaultCalendar": {}})), None);
         assert_eq!(refused(&json!({})), None);
     }

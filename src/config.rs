@@ -1,18 +1,10 @@
-//! Runtime configuration, entirely from environment variables.
-//!
-//! Nothing here is secret-bearing beyond what the process needs to boot; the
-//! master encryption key and OAuth client secret arrive via env (k8s Secret in
-//! production) and are never logged.
+//! Runtime configuration, entirely from environment variables. The encryption
+//! key and OIDC client secret are never logged.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-/// One value a backend MCP needs from the user.
-///
-/// Most MCPs want a single bearer token, but not all: CalDAV authenticates
-/// with a username *and* an app password, against a server URL that varies by
-/// provider. So a credential is a set of named fields, each injected into its
-/// own header.
+/// One value a backend MCP needs from the user, injected into its own header.
 #[derive(Clone, Debug, Deserialize)]
 pub struct CredentialField {
     /// Form field name and storage key, e.g. `"username"`.
@@ -22,35 +14,25 @@ pub struct CredentialField {
     /// Header the backend expects this value in, e.g. `X-CalDAV-Username`.
     pub header: String,
     /// Render as a password input and never echo the stored value back.
-    /// Non-secret fields (a server URL) are shown so they can be edited.
     #[serde(default = "default_true")]
     pub secret: bool,
-    /// Prefilled value — for a field with a sensible provider default.
+    /// Stored when an optional field is left blank.
     #[serde(default)]
     pub default: Option<String>,
     /// Placeholder text for the input.
     #[serde(default)]
     pub hint: Option<String>,
-    /// Whether the user must fill this in. An optional field left blank is
-    /// simply not stored, and the backend applies its own default.
+    /// Whether the user must fill this in.
     #[serde(default = "default_true")]
     pub required: bool,
-    /// GraphQL query whose results become this field's suggestions, run against
-    /// the backend's `graphql` tool with the user's own credentials. Alias the
-    /// selection to `options { value label }` — the dashboard reads that shape
-    /// and nothing else, so no per-field mapping config is needed.
-    ///
-    /// Only offered once credentials are stored: without them there is nobody
-    /// to ask.
+    /// GraphQL query whose results become this field's choices, run with the
+    /// user's credentials once they are stored. Alias the selection to
+    /// `options { value label }`.
     #[serde(default)]
     pub options_query: Option<String>,
-    /// GraphQL mutation run after this field is saved, to tell the backend what
-    /// the user picked — `setDefaultCalendar`, say, so their phone agrees with
-    /// the gateway. Takes the new value as `$value`.
-    ///
-    /// Best-effort by definition: our stored value is what the proxy injects
-    /// and is authoritative, so a backend that refuses (no scheduling support,
-    /// a read-only account) leaves the save standing and says so.
+    /// GraphQL mutation run after this field changes, taking it as `$value`,
+    /// so the backend's own setting agrees. Best effort: the stored value is
+    /// what the proxy injects either way.
     #[serde(default)]
     pub sync_mutation: Option<String>,
 }
@@ -59,41 +41,27 @@ fn default_true() -> bool {
     true
 }
 
-/// A backend MCP the gateway fronts. The registry comes from the environment
-/// (`MCP_REGISTRY`), so adding an MCP is config, not code.
+/// A backend MCP the gateway fronts, from `MCP_REGISTRY`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct Mcp {
-    /// URL slug + storage key, e.g. "fastmail" → routed at `/mcp/fastmail`.
+    /// URL slug and storage key: "fastmail" is routed at `/fastmail`.
     pub id: String,
     /// Human name for the dashboard.
     pub name: String,
     /// Backend MCP endpoint to proxy to, e.g. `http://fastmail-mcp:8080/mcp`.
     pub backend: String,
-    /// Shorthand for the single-secret case: one header, no `fields` block.
-    /// Normalised into a one-entry `fields` at load, so nothing downstream has
-    /// to know which form the registry used.
+    /// Shorthand for a single secret, expanded into `fields` at load.
     #[serde(default)]
     credential_header: Option<String>,
-    /// The values this MCP needs. Non-empty after loading unless [`Mcp::public`]
-    /// is set, which is the one case where an MCP legitimately needs nothing.
+    /// The values this MCP needs; non-empty after loading unless `public`.
     #[serde(default)]
     pub fields: Vec<CredentialField>,
-    /// This MCP reads something public and takes no credentials at all.
-    ///
-    /// Opt-in rather than inferred from an empty `fields`, because "no
-    /// credentials declared" is far more often a typo than a decision, and
-    /// silently fronting a backend with no key is the wrong way to find out.
-    /// A public MCP shows no connect form: the OAuth login already established
-    /// who the user is, and there is nothing further to store.
+    /// Takes no credentials. Explicit rather than inferred from empty `fields`,
+    /// which is more often a mistake than a decision.
     #[serde(default)]
     pub public: bool,
-    /// Plain GraphQL-over-HTTP endpoint, when the backend serves one (e.g.
-    /// `caldav-cli mcp --http … --graphql`). The dashboard prefers it for its
-    /// own lookups: MCP is a tool-call protocol for models, and machine-to-
-    /// machine it costs a session handshake and two layers of unwrapping to
-    /// send the same query. Absent ⇒ fall back to the `graphql` MCP tool.
-    ///
-    /// Never proxied — clients reach `/{id}` only, which goes to `backend`.
+    /// Plain GraphQL-over-HTTP endpoint for the dashboard's own queries, which
+    /// otherwise go through the `graphql` MCP tool. Never proxied.
     #[serde(default)]
     pub graphql: Option<String>,
     /// Optional link shown in the dashboard for where to get the key.
@@ -102,27 +70,21 @@ pub struct Mcp {
     /// Optional hint text, used as the placeholder in the single-secret form.
     #[serde(default)]
     pub key_hint: Option<String>,
-    /// How to ask this backend whether the stored credentials are any good.
-    /// Absent means the gateway makes no claim either way, which is the honest
-    /// answer for a backend that authenticates nothing.
+    /// How to ask the backend whether the stored credentials work. Absent, the
+    /// gateway makes no claim.
     #[serde(default)]
     pub verify: Option<Verify>,
 }
 
 /// A query proving the stored credentials are accepted, and how to read it.
-///
-/// Backends disagree about how to report bad auth — some raise, some answer
-/// calmly with a status — so this describes both shapes rather than forcing one.
-/// What it will not do is guess: an error is never taken as proof a credential
-/// is wrong, only an explicit [`Verify::rejected`] match is. A backend that is
-/// merely unreachable must not have its user told to go and change a password.
+/// Only an explicit [`Verify::rejected`] match reports a credential as wrong;
+/// an error is never taken as proof.
 #[derive(Clone, Debug, Deserialize)]
 pub struct Verify {
     /// Run with the user's own credentials, like any other backend call.
     pub query: String,
-    /// Dotted path to the value that answers the question. Absent means the
-    /// query completing without error is itself the answer, which is all a
-    /// backend that raises on bad auth can tell us.
+    /// Dotted path to the answer. Absent, completing without error is the
+    /// answer.
     #[serde(default)]
     pub path: Option<String>,
     /// The value at `path` meaning the credentials work. Absent means any
@@ -136,14 +98,7 @@ pub struct Verify {
 }
 
 impl Mcp {
-    /// Whether this MCP needs nothing from the user. Ready to connect the
-    /// moment they log in.
-    pub fn is_public(&self) -> bool {
-        self.public
-    }
-
-    /// The storage key of the first field — where a legacy single-secret row
-    /// (a bare string rather than a JSON object) is mapped on read.
+    /// The field a legacy single-secret row decodes onto.
     pub fn primary_field(&self) -> &str {
         self.fields
             .first()
@@ -156,23 +111,18 @@ impl Mcp {
 pub struct Config {
     /// Address to bind the HTTP server to, e.g. `0.0.0.0:8080`.
     pub bind_addr: String,
-    /// This service's public base URL, e.g. `https://mail.radiosilence.dev`.
-    /// Used to build OAuth protected-resource metadata and redirect URIs.
+    /// This service's public base URL.
     pub public_url: String,
     /// Postgres connection string.
     pub database_url: String,
     /// 32-byte key for XChaCha20-Poly1305, base64 (standard) encoded.
     pub token_enc_key: Vec<u8>,
-    /// Hydra's public issuer URL. Two roles, both as a client of it: what MCP
-    /// clients are pointed at in the protected-resource metadata, and where
-    /// this gateway sends a browser to have somebody signed in.
+    /// Hydra's public issuer URL: the authorization server MCP clients are
+    /// pointed at, and where the dashboard login goes.
     pub hydra_issuer: String,
-    /// Hydra admin API base, cluster-internal only, e.g. `http://hydra-admin:4445`.
-    /// Used for token introspection and the login/consent handshake.
+    /// Hydra's cluster-internal admin API, for token introspection.
     pub hydra_admin_url: String,
-    /// This gateway's own registration at the issuer, as an ordinary relying
-    /// party. Generated and registered by the login provider rather than typed
-    /// here, so a redirect URI cannot drift from the hostname it belongs to.
+    /// The dashboard's own client registration at the issuer.
     pub oidc_client_id: String,
     pub oidc_client_secret: String,
     /// Registry of backend MCPs this gateway fronts.
@@ -212,11 +162,8 @@ impl Config {
         self.hydra_issuer.trim_end_matches('/')
     }
 
-    /// Where the issuer sends the browser back.
-    ///
-    /// Derived from `PUBLIC_URL` rather than configured, and the login provider
-    /// derives the copy it allowlists from the same hostname — so the two are
-    /// the same string by construction rather than by being kept in step.
+    /// Derived from `PUBLIC_URL`, as the login provider derives the copy it
+    /// registers.
     pub fn oidc_redirect_uri(&self) -> String {
         format!("{}/auth/callback", self.public_url.trim_end_matches('/'))
     }
@@ -226,8 +173,7 @@ impl Config {
     }
 }
 
-/// Path segments the gateway serves itself — an MCP id here would shadow a
-/// gateway route (MCPs are mounted at `/{id}`).
+/// Path segments the gateway serves itself, which an MCP id would shadow.
 const RESERVED_IDS: &[&str] = &[
     "register",
     "login",
@@ -239,29 +185,41 @@ const RESERVED_IDS: &[&str] = &[
     ".well-known",
 ];
 
-/// Parse the registry document. YAML, and therefore JSON too — every JSON
-/// document is valid YAML, so both forms load through one parser.
-///
-/// It arrives whole in `MCP_REGISTRY` rather than as a path to a file, because
-/// the registry belongs to the deployment and not to this repo: whatever runs
-/// the gateway already holds it as config and can hand it straight over. A file
-/// would be a second copy to keep in sync, and a mounted ConfigMap changing
-/// under a running pod is invisible to it — env is part of the pod spec, so
-/// editing the registry rolls the deployment.
+/// Parse the registry document: YAML, which includes JSON. It is passed whole
+/// in the environment rather than as a file path so that editing it rolls the
+/// deployment.
 fn load_registry(raw: &str) -> Result<Vec<Mcp>> {
     let mcps: Vec<Mcp> = serde_norway::from_str(raw).context(
         "parsing MCP_REGISTRY, which holds the registry document itself \
          (YAML or JSON), not a path to one",
     )?;
-    mcps.into_iter().map(normalize).collect()
+    let mcps: Vec<Mcp> = mcps.into_iter().map(normalize).collect::<Result<_>>()?;
+    let mut seen = std::collections::HashSet::new();
+    for m in &mcps {
+        anyhow::ensure!(
+            seen.insert(m.id.as_str()),
+            "MCP id {:?} is duplicated",
+            m.id
+        );
+    }
+    Ok(mcps)
+}
+
+/// Ids end up in URLs, element ids and Datastar expressions, so they are kept
+/// to characters that need no escaping in any of them.
+fn is_slug(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Validate one registry entry and expand the `credential_header` shorthand
 /// into the general `fields` form.
 fn normalize(mut m: Mcp) -> Result<Mcp> {
     anyhow::ensure!(
-        !m.id.is_empty() && !m.id.contains('/'),
-        "invalid MCP id {:?}: must be a non-empty single path segment",
+        is_slug(&m.id),
+        "invalid MCP id {:?}: use letters, digits, `-` and `_`",
         m.id
     );
     anyhow::ensure!(
@@ -309,23 +267,20 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
     let mut seen = std::collections::HashSet::new();
     for f in &m.fields {
         anyhow::ensure!(
-            !f.id.is_empty() && seen.insert(f.id.as_str()),
-            "MCP {:?} has an empty or duplicated field id {:?}",
+            is_slug(&f.id) && seen.insert(f.id.as_str()),
+            "MCP {:?} has an invalid or duplicated field id {:?}",
             m.id,
             f.id
         );
-        // A field the user can't see on the connect form can't be required:
-        // its choices come from a backend that needs credentials first.
+        // Its choices need stored credentials, so it is not on the connect form.
         anyhow::ensure!(
             f.options_query.is_none() || !f.required,
             "MCP {:?} field {:?} is required but its options come from the backend",
             m.id,
             f.id
         );
-        // A header name with a space or newline in it would be rejected at
-        // request time, deep inside the proxy. Catch it at boot instead.
         anyhow::ensure!(
-            !f.header.is_empty() && f.header.bytes().all(|b| b.is_ascii_graphic() && b != b':'),
+            http::HeaderName::from_bytes(f.header.as_bytes()).is_ok(),
             "MCP {:?} field {:?} has an invalid header name {:?}",
             m.id,
             f.id,
@@ -397,7 +352,7 @@ mod tests {
         let mcps =
             parse(r#"[{"id":"folk","name":"Folk","backend":"http://folk/mcp","public":true}]"#)
                 .unwrap();
-        assert!(mcps[0].is_public());
+        assert!(mcps[0].public);
         assert!(mcps[0].fields.is_empty(), "a public MCP declares no fields");
     }
 
@@ -423,7 +378,7 @@ mod tests {
             r#"[{"id":"x","name":"X","backend":"http://x/mcp","credential_header":"X-Token"}]"#,
         )
         .unwrap();
-        assert!(!mcps[0].is_public());
+        assert!(!mcps[0].public);
     }
 
     #[test]
@@ -440,6 +395,16 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("one or the other"));
+    }
+
+    #[test]
+    fn rejects_duplicate_mcp_ids() {
+        let err = parse(
+            r#"[{"id":"x","name":"X","backend":"http://x/mcp","public":true},
+                {"id":"x","name":"Y","backend":"http://y/mcp","public":true}]"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("duplicated"));
     }
 
     #[test]
@@ -596,7 +561,7 @@ mod tests {
 
     #[test]
     fn rejects_reserved_and_malformed_ids() {
-        for id in ["dashboard", "healthz", "a/b", ""] {
+        for id in ["dashboard", "healthz", "a/b", "", "it's", "a b", "a.b"] {
             let json = format!(
                 r#"[{{"id":{},"name":"X","backend":"http://x/mcp","credential_header":"X-A"}}]"#,
                 serde_json::to_string(id).unwrap()

@@ -1,10 +1,10 @@
 //! Persistence: the `(sub, mcp) → encrypted credential set` mapping.
 //!
-//! This is the only genuinely sensitive state the service holds. Credentials
-//! are encrypted (see [`crate::crypto`]) before they ever touch a row, so the
-//! plaintext exists only in memory while a request is in flight. State is
-//! deliberately disposable — losing the DB just means users re-enter their
-//! credentials.
+//! Credentials are encrypted (see [`crate::crypto`]) before they touch a row.
+//! Losing the database costs users re-entering their credentials, nothing
+//! more.
+
+use std::collections::HashMap;
 
 use anyhow::Result;
 use base64::Engine;
@@ -12,6 +12,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 
+use crate::config::Mcp;
 use crate::crypto::Cipher;
 
 /// A resolved dashboard session.
@@ -20,10 +21,9 @@ pub struct Session {
     pub login: String,
 }
 
-/// Transient OAuth flow state carried across the GitHub redirect.
+/// Login state held while the browser is at the issuer.
 pub struct OAuthFlow {
     pub csrf: String,
-    /// The PKCE verifier, held back while the browser is at the issuer.
     pub verifier: String,
 }
 
@@ -46,23 +46,17 @@ pub struct TokenMeta {
 }
 
 impl TokenMeta {
-    /// RFC 3339 so the dashboard can drop it straight into a `<time
-    /// datetime>` and let the browser localise it; `OffsetDateTime`'s
-    /// `Display` is a debug-ish format not fit for showing to a user.
+    /// For `<time datetime>`.
     pub fn updated_at_rfc3339(&self) -> String {
         self.updated_at
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_else(|_| self.updated_at.to_string())
     }
 
-    /// How long ago, in words. Rendered by the server because the alternative
-    /// needs the viewer's timezone, which the server does not have — and an
-    /// exact time formatted in the wrong zone, or an ISO string sitting there
-    /// until scripting rewrites it, are both worse than "3 hours ago". This
-    /// says the thing the dashboard is actually asked: is it recent.
+    /// How long ago, in words: the server does not know the viewer's timezone,
+    /// so a relative time is the one it can render correctly.
     pub fn updated_ago(&self) -> String {
         let seconds = (OffsetDateTime::now_utc() - self.updated_at).whole_seconds();
-        // A clock skewed the other way should not read "in -3 minutes".
         let seconds = seconds.max(0);
         let (n, unit) = match seconds {
             0..60 => return "just now".into(),
@@ -82,19 +76,13 @@ impl TokenMeta {
 /// Ordered so the encrypted blob is stable across saves of the same values.
 pub type CredentialSet = std::collections::BTreeMap<String, String>;
 
-/// Serialise a credential set for encryption. Always JSON, so a set of any
-/// size round-trips through the single `enc_secret` column — no schema change
-/// was needed to go from one secret per MCP to several.
+/// Serialise a credential set for encryption.
 fn encode_secret(values: &CredentialSet) -> String {
     serde_json::to_string(values).unwrap_or_else(|_| "{}".to_string())
 }
 
-/// Parse a decrypted blob back into a credential set.
-///
-/// Rows written before multi-field support hold a bare secret rather than a
-/// JSON object; those decode onto `primary_field`, so existing Fastmail tokens
-/// keep working untouched. A stored value that happens to be a JSON object of
-/// strings would be misread, which no API token in practice is.
+/// Parse a decrypted blob back into a credential set. Rows written before
+/// multi-field support hold a bare secret, which decodes onto `primary_field`.
 fn decode_secret(plain: &str, primary_field: &str) -> CredentialSet {
     match serde_json::from_str::<CredentialSet>(plain) {
         Ok(values) => values,
@@ -106,6 +94,8 @@ impl Store {
     pub async fn connect(database_url: &str, cipher: Cipher) -> Result<Self> {
         let pool = PgPoolOptions::new()
             .max_connections(8)
+            // Fail fast in an outage rather than holding every request.
+            .acquire_timeout(std::time::Duration::from_secs(5))
             .connect(database_url)
             .await?;
         Ok(Self { pool, cipher })
@@ -117,10 +107,7 @@ impl Store {
         Ok(())
     }
 
-    /// Fetch and decrypt a user's credential set for a given MCP.
-    ///
-    /// `primary_field` names the field a legacy single-secret row maps onto —
-    /// see [`decode_secret`].
+    /// Fetch and decrypt a user's credential set for one MCP.
     pub async fn get_credentials(
         &self,
         sub: &str,
@@ -133,8 +120,7 @@ impl Store {
             .map(|(values, _)| values))
     }
 
-    /// [`Self::get_credentials`] along with when they were last saved, in the
-    /// one query the dashboard needs for each MCP it shows.
+    /// [`Self::get_credentials`] along with when they were last saved.
     pub async fn get_credentials_with_meta(
         &self,
         sub: &str,
@@ -161,17 +147,40 @@ impl Store {
         }
     }
 
+    /// Every credential set a user has stored, keyed by MCP id, for the MCPs
+    /// still in the registry.
+    pub async fn credentials_for(
+        &self,
+        sub: &str,
+        mcps: &[Mcp],
+    ) -> Result<HashMap<String, (CredentialSet, TokenMeta)>> {
+        let rows =
+            sqlx::query("SELECT mcp_id, enc_secret, updated_at FROM credentials WHERE sub = $1")
+                .bind(sub)
+                .fetch_all(&self.pool)
+                .await?;
+        let mut stored = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let mcp_id: String = row.get("mcp_id");
+            let Some(mcp) = mcps.iter().find(|m| m.id == mcp_id) else {
+                continue;
+            };
+            let plain = self.cipher.open(&row.get::<String, _>("enc_secret"))?;
+            let meta = TokenMeta {
+                updated_at: row.get("updated_at"),
+            };
+            stored.insert(mcp_id, (decode_secret(&plain, mcp.primary_field()), meta));
+        }
+        Ok(stored)
+    }
+
     /// Replace a user's credential set for an MCP with `merge(stored)`, and
     /// return what was stored before alongside what is stored now.
     ///
-    /// The row is locked from the read to the write. Every change rewrites the
-    /// whole encrypted set, so two saves that each read, merged and wrote
-    /// independently would lose one side's field: the calendar picker saving
-    /// while the credential form is submitted, say. `merge` refusing leaves the
-    /// row untouched and hands its error back.
-    ///
-    /// A user's very first save has no row to lock; two of those racing end
-    /// with the later one, which is all either of them asked for.
+    /// The row is locked from read to write, since every change rewrites the
+    /// whole encrypted set and two concurrent saves would otherwise lose one
+    /// side's fields. `merge` refusing leaves the row untouched and hands its
+    /// error back.
     pub async fn update_credentials<E>(
         &self,
         sub: &str,
@@ -261,8 +270,8 @@ impl Store {
         Ok(())
     }
 
-    /// Remove sessions and login flows past their expiry. Lookups already
-    /// ignore them; this is only so the tables do not grow forever.
+    /// Remove sessions and login flows past their expiry; lookups already
+    /// ignore them, so this only keeps the tables from growing.
     pub async fn delete_expired(&self) -> Result<()> {
         sqlx::query("DELETE FROM sessions WHERE expires_at <= now()")
             .execute(&self.pool)
@@ -328,7 +337,6 @@ mod tests {
         assert_eq!(ago(60), "1 minute ago");
         assert_eq!(ago(3 * 3_600), "3 hours ago");
         assert_eq!(ago(2 * 86_400), "2 days ago");
-        // A clock that disagrees the other way must not read "in -3 minutes".
         assert_eq!(ago(-200), "just now");
     }
 

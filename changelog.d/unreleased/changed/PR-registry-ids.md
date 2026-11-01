@@ -1,0 +1,1 @@
+- **Registry ids are restricted to letters, digits, `-` and `_`, and must be unique.** MCP and field ids are written into URLs, element ids and Datastar expressions, where other characters need escaping that nothing applied. A duplicated MCP id used to leave the second entry unreachable; it now fails at startup, as does an id outside the new character set.

@@ -1,9 +1,4 @@
 //! Signed-in-ness as an extractor, so a handler cannot be written without it.
-//!
-//! Every handler used to open by fetching the session and branching on `None`.
-//! Four copies of a guard, and the failure mode for a fifth handler that forgot
-//! one is an unauthenticated endpoint on a credential vault — not something to
-//! leave to remembering.
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -14,8 +9,7 @@ use crate::error::AppError;
 use crate::state::AppState;
 use crate::store::Session;
 
-/// For handlers a browser navigates to. Not being signed in is answered with
-/// the login page, which is what the person actually needs.
+/// For pages a browser navigates to: not signed in redirects to the login.
 pub struct PageSession(pub Session);
 
 impl FromRequestParts<AppState> for PageSession {
@@ -23,24 +17,31 @@ impl FromRequestParts<AppState> for PageSession {
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Response> {
         match current_session(state, &parts.headers).await {
-            Some(session) => Ok(Self(session)),
-            None => Err(Redirect::to("/login").into_response()),
+            Ok(Some(session)) => Ok(Self(session)),
+            Ok(None) => Err(Redirect::to("/login").into_response()),
+            Err(e) => Err(e.into_response()),
         }
     }
 }
 
-/// For the fragment endpoints htmx calls. A redirect here would be followed and
-/// the login page swapped into whatever the request targeted, so an expired
-/// session has to arrive as an error instead.
+/// For the endpoints Datastar fetches. A redirect would be followed by the
+/// fetch, so an expired session answers 401 instead.
+///
+/// Requests must carry `Datastar-Request`. A cross-site form cannot set a
+/// custom header, and SameSite=Lax alone lets sibling subdomains post with the
+/// session cookie.
 pub struct FragmentSession(pub Session);
 
 impl FromRequestParts<AppState> for FragmentSession {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, AppError> {
+        if !parts.headers.contains_key("datastar-request") {
+            return Err(AppError::Forbidden);
+        }
         current_session(state, &parts.headers)
-            .await
+            .await?
             .map(Self)
-            .ok_or_else(|| AppError::BadRequest("not signed in".into()))
+            .ok_or(AppError::Unauthorized)
     }
 }

@@ -1,13 +1,11 @@
 //! OAuth Protected Resource Metadata (RFC 9728).
 //!
-//! This is the only OAuth metadata *we* serve: it names Hydra as the
-//! authorization server. Claude fetches this after a 401, then talks OAuth
-//! directly to Hydra (DCR, PKCE, token) — we never proxy those endpoints.
+//! Names Hydra as the authorization server; clients fetch this after a 401
+//! and then talk OAuth to Hydra directly.
 //!
-//! Each MCP is its own resource (`{public_url}/{id}`), with its metadata at
-//! the path RFC 9728 derives from that URL. Clients check that the document's
-//! `resource` matches the URL they connected to, so the gateway-wide document
-//! alone is rejected by the strict ones.
+//! Each MCP is its own resource (`{public_url}/{id}`) with metadata at the path
+//! RFC 9728 derives from it, because strict clients check `resource` against
+//! the URL they connected to.
 
 use axum::Json;
 use axum::extract::{Path, State};

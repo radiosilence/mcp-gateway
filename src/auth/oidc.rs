@@ -1,13 +1,6 @@
-//! The authorization-code exchange against Hydra.
-//!
-//! This gateway is an ordinary relying party now: it sends the browser to the
-//! issuer and reads an identity out of the result. It does not know how anyone
-//! signs in, which upstream vouched for them, or who is allowed to — that lives
-//! at the login provider, and changing it changes nothing here.
-//!
-//! PKCE is used even though this client holds a secret. It costs one hash and
-//! removes the class of attack where a leaked authorization code is enough on
-//! its own.
+//! The dashboard's authorization-code login against Hydra, as an ordinary
+//! relying party. PKCE is used although the client holds a secret, so a leaked
+//! authorization code is not enough on its own.
 
 use anyhow::{Context, Result, bail};
 use base64::Engine as _;
@@ -34,7 +27,7 @@ pub fn authorize_url(config: &Config, csrf: &str, challenge: &str) -> String {
         .append_pair("client_id", &config.oidc_client_id)
         .append_pair("redirect_uri", &config.oidc_redirect_uri())
         .append_pair("response_type", "code")
-        .append_pair("scope", "openid profile offline_access")
+        .append_pair("scope", "openid profile")
         .append_pair("state", csrf)
         .append_pair("code_challenge", challenge)
         .append_pair("code_challenge_method", "S256");
@@ -52,11 +45,8 @@ pub struct Identity {
     pub login: String,
 }
 
-/// Exchange the code and read the identity out of the ID token.
-///
-/// Only the identity is kept. Nothing here calls an API on anyone's behalf, so
-/// an access token retained past this point would be a credential held for no
-/// reason.
+/// Exchange the code and read the identity out of the ID token. The tokens
+/// themselves are discarded.
 pub async fn exchange_code(
     config: &Config,
     http: &reqwest::Client,
@@ -87,10 +77,8 @@ pub async fn exchange_code(
         .await
         .context("the token response was not JSON")?;
 
-    // The ID token arrived directly from the issuer over TLS, in a back-channel
-    // response to a request we made — there is no untrusted party in the path,
-    // so there is nothing signature verification would catch here. It exists
-    // for tokens that arrive via the browser instead.
+    // Not signature-checked: it came straight from the issuer over TLS in the
+    // back channel, with no untrusted party in the path (OIDC Core §3.1.3.7).
     let id_token = token
         .id_token
         .context("the token response carried no id_token")?;
@@ -109,8 +97,7 @@ pub async fn exchange_code(
         .and_then(|v| v.as_str())
         .context("the id_token carried no sub")?
         .to_string();
-    // The provider attaches these at consent. Falling back to the subject keeps
-    // a dashboard readable rather than blank if it ever stops.
+    // The provider attaches these at consent; the subject is the fallback.
     let login = claims
         .get("preferred_username")
         .or_else(|| claims.get("name"))

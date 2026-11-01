@@ -1,31 +1,26 @@
-//! Asking a backend a question on the user's behalf.
-//!
-//! The proxy is otherwise a dumb pipe — the client speaks the protocol. But the
-//! dashboard needs to populate a field's choices (which calendars does this
-//! account have?), and only the backend knows.
+//! Asking a backend a GraphQL question on the user's behalf, for the
+//! dashboard's own needs (a setting's choices, a credential check).
 //!
 //! A backend serving plain GraphQL gets one POST. One that speaks only MCP gets
-//! the long way round: initialise a session, call the `graphql` tool, tear the
-//! session down — and its answer arrives as JSON-RPC (bare or as an SSE frame)
-//! wrapping a tool result wrapping the GraphQL response as a string.
+//! a session: initialise, call the `graphql` tool, tear down. The answer then
+//! arrives as JSON-RPC (bare or over SSE) wrapping a tool result wrapping the
+//! GraphQL response as a string.
 
 use anyhow::{Context, Result, bail};
 use axum::http::header;
+use futures_util::StreamExt;
 use serde_json::{Value, json};
 
 use crate::config::Mcp;
 use crate::state::AppState;
 use crate::store::CredentialSet;
 
-const PROTOCOL_VERSION: &str = "2024-11-05";
+const PROTOCOL_VERSION: &str = "2025-06-18";
 const SESSION_HEADER: &str = "mcp-session-id";
+const VERSION_HEADER: &str = "mcp-protocol-version";
 
 /// Run `query` against `mcp` as the owner of `credentials`, returning the
 /// query's `data` object.
-///
-/// Straight to the backend's GraphQL endpoint where it has one; otherwise
-/// through the `graphql` MCP tool, which costs a session handshake and arrives
-/// wrapped in JSON-RPC, wrapped in a tool result, as a string.
 pub async fn graphql(
     state: &AppState,
     mcp: &Mcp,
@@ -39,7 +34,6 @@ pub async fn graphql(
     }
 }
 
-/// One POST, one JSON response.
 async fn post_graphql(
     state: &AppState,
     mcp: &Mcp,
@@ -57,13 +51,14 @@ async fn post_graphql(
         .send()
         .await
         .context("backend unreachable")?;
-
     let status = response.status();
-    let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
         bail!("backend returned {status}");
     }
-    let parsed: Value = serde_json::from_str(&body).context("backend returned unparseable JSON")?;
+    let parsed: Value = response
+        .json()
+        .await
+        .context("backend returned unparseable JSON")?;
     graphql_data(parsed)
 }
 
@@ -75,26 +70,59 @@ async fn graphql_over_mcp(
     variables: Option<Value>,
 ) -> Result<Value> {
     let session = initialize(state, mcp, credentials).await?;
-    call_tool(state, mcp, credentials, session.id(), query, variables).await
+
+    let mut arguments = json!({"query": query});
+    // The tool takes its variables JSON-encoded, unlike the plain endpoint.
+    if let Some(variables) = variables {
+        arguments["variables"] = Value::String(variables.to_string());
+    }
+    let response = session
+        .request(state.http.post(&mcp.backend), mcp, credentials)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "graphql", "arguments": arguments},
+        }))
+        .send()
+        .await
+        .context("backend unreachable")?;
+    let result = rpc_result(response, 2).await?;
+    if result.get("isError").and_then(Value::as_bool) == Some(true) {
+        bail!(
+            "{}",
+            tool_text(&result).unwrap_or_else(|| "tool call failed".into())
+        );
+    }
+    let text = tool_text(&result).context("backend returned no text content")?;
+    let parsed: Value = serde_json::from_str(&text).context("backend returned unparseable JSON")?;
+    graphql_data(parsed)
 }
 
-/// A backend session, ended when this is dropped.
-///
-/// The backend keeps session state until told otherwise. Ending it on drop
-/// rather than after the call covers every way out: an error part way through
-/// the handshake, and the dashboard request being cancelled because the
-/// browser went away, which drops this future wherever it was waiting. The
+/// A backend session, ended when this is dropped: that covers an error part
+/// way through and the dashboard request being cancelled mid-await. The
 /// teardown runs as its own task so nobody waits for it.
 struct Session {
     id: Option<String>,
-    /// The DELETE that ends it, carrying the same credentials as every other
-    /// request: a backend that authenticates each request refuses a bare one.
+    version: String,
+    /// Carries the same credentials as every other request, since a backend
+    /// that authenticates each request refuses a bare DELETE. The protocol
+    /// version is added at drop, once negotiated.
     teardown: Option<reqwest::RequestBuilder>,
 }
 
 impl Session {
-    fn id(&self) -> Option<&str> {
-        self.id.as_deref()
+    fn request(
+        &self,
+        req: reqwest::RequestBuilder,
+        mcp: &Mcp,
+        credentials: &CredentialSet,
+    ) -> reqwest::RequestBuilder {
+        let req = mcp_request(req, mcp, credentials).header(VERSION_HEADER, &self.version);
+        match &self.id {
+            Some(id) => req.header(SESSION_HEADER, id),
+            None => req,
+        }
     }
 }
 
@@ -106,15 +134,14 @@ impl Drop for Session {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
+        let request = request.header(VERSION_HEADER, &self.version);
         runtime.spawn(async move {
             let _ = request.send().await;
         });
     }
 }
 
-/// Attach the user's credentials as the headers this MCP declares. The backend
-/// trusts them unconditionally — it is only reachable inside the cluster, and
-/// the gateway is the thing that authenticated the user.
+/// Attach the user's credentials as the headers this MCP declares.
 fn credentialed(
     mut req: reqwest::RequestBuilder,
     mcp: &Mcp,
@@ -131,25 +158,18 @@ fn credentialed(
     req.header(header::CONTENT_TYPE, "application/json")
 }
 
-/// An MCP request to the backend.
-fn request(
-    state: &AppState,
+/// Streamable HTTP lets the server choose JSON or SSE, so accept both.
+fn mcp_request(
+    req: reqwest::RequestBuilder,
     mcp: &Mcp,
     credentials: &CredentialSet,
-    session: Option<&str>,
 ) -> reqwest::RequestBuilder {
-    // Streamable HTTP lets the server pick its response encoding; accept both.
-    let mut req = credentialed(state.http.post(&mcp.backend), mcp, credentials)
-        .header(header::ACCEPT, "application/json, text/event-stream");
-    if let Some(id) = session {
-        req = req.header(SESSION_HEADER, id);
-    }
-    req
+    credentialed(req, mcp, credentials)
+        .header(header::ACCEPT, "application/json, text/event-stream")
 }
 
-/// Handshake, returning the session the backend assigned (if any).
 async fn initialize(state: &AppState, mcp: &Mcp, credentials: &CredentialSet) -> Result<Session> {
-    let response = request(state, mcp, credentials, None)
+    let response = mcp_request(state.http.post(&mcp.backend), mcp, credentials)
         .json(&json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -157,38 +177,35 @@ async fn initialize(state: &AppState, mcp: &Mcp, credentials: &CredentialSet) ->
             "params": {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {
-                    "name": "mcp-gateway",
-                    "version": env!("CARGO_PKG_VERSION"),
-                },
+                "clientInfo": {"name": "mcp-gateway", "version": crate::VERSION},
             },
         }))
         .send()
         .await
         .context("backend unreachable")?;
 
-    // Held from here, so every early return below still ends the session.
+    // Built before anything can fail, so every early return ends the session.
     let id = response
         .headers()
         .get(SESSION_HEADER)
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
-    let session = Session {
+    let mut session = Session {
         teardown: id.as_ref().map(|id| {
             credentialed(state.http.delete(&mcp.backend), mcp, credentials)
                 .header(SESSION_HEADER, id)
         }),
         id,
+        version: PROTOCOL_VERSION.to_string(),
     };
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        bail!("backend rejected initialize: {status}");
+    let result = rpc_result(response, 1).await?;
+    if let Some(version) = result.get("protocolVersion").and_then(Value::as_str) {
+        session.version = version.to_string();
     }
-    rpc_result(&body)?;
 
     // Servers may refuse requests until this notification arrives.
-    let _ = request(state, mcp, credentials, session.id())
+    let _ = session
+        .request(state.http.post(&mcp.backend), mcp, credentials)
         .json(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
         .send()
         .await;
@@ -196,58 +213,16 @@ async fn initialize(state: &AppState, mcp: &Mcp, credentials: &CredentialSet) ->
     Ok(session)
 }
 
-async fn call_tool(
-    state: &AppState,
-    mcp: &Mcp,
-    credentials: &CredentialSet,
-    session: Option<&str>,
-    query: &str,
-    variables: Option<Value>,
-) -> Result<Value> {
-    let mut arguments = json!({"query": query});
-    // The tool takes its variables JSON-encoded, unlike the plain endpoint.
-    if let Some(variables) = variables {
-        arguments["variables"] = Value::String(variables.to_string());
-    }
-    let response = request(state, mcp, credentials, session)
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/call",
-            "params": {"name": "graphql", "arguments": arguments},
-        }))
-        .send()
-        .await
-        .context("backend unreachable")?;
-
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        bail!("backend returned {status}");
-    }
-
-    let result = rpc_result(&body)?;
-    if result.get("isError").and_then(Value::as_bool) == Some(true) {
-        bail!(
-            "{}",
-            tool_text(&result).unwrap_or_else(|| "tool call failed".into())
-        );
-    }
-
-    // A tool answers in text; this one's text is the GraphQL response.
-    let text = tool_text(&result).context("backend returned no text content")?;
-    let parsed: Value = serde_json::from_str(&text).context("backend returned unparseable JSON")?;
-    graphql_data(parsed)
-}
-
 /// The `data` of a GraphQL response, surfacing the first error if it failed.
 fn graphql_data(response: Value) -> Result<Value> {
-    if let Some(errors) = response.get("errors").and_then(Value::as_array)
-        && !errors.is_empty()
+    if let Some(error) = response
+        .get("errors")
+        .and_then(Value::as_array)
+        .and_then(|e| e.first())
     {
         bail!(
             "{}",
-            errors[0]
+            error
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("query failed")
@@ -268,16 +243,54 @@ fn tool_text(result: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The `result` of a JSON-RPC reply delivered as either bare JSON or an SSE
-/// frame, erroring on a JSON-RPC `error` response.
-fn rpc_result(body: &str) -> Result<Value> {
-    let payload = match body.lines().find_map(|l| l.strip_prefix("data:")) {
-        Some(data) => data.trim(),
-        None => body.trim(),
+/// The `result` of the JSON-RPC reply to request `id`.
+///
+/// Over SSE the stream is read only until that reply arrives: a server may send
+/// notifications first, and may hold the stream open afterwards.
+async fn rpc_result(response: reqwest::Response, id: u64) -> Result<Value> {
+    let status = response.status();
+    if !status.is_success() {
+        bail!("backend returned {status}");
+    }
+    let is_sse = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("text/event-stream"));
+
+    let reply = match is_sse {
+        false => response
+            .json::<Value>()
+            .await
+            .context("backend sent malformed JSON-RPC")?,
+        true => {
+            let mut events = SseEvents::default();
+            let mut body = response.bytes_stream();
+            loop {
+                if let Some(reply) = events.by_ref().find(|m| has_id(m, id)) {
+                    break reply;
+                }
+                match body.next().await {
+                    Some(chunk) => events.push(&chunk.context("reading the backend's stream")?),
+                    None => {
+                        events.finish();
+                        break events
+                            .find(|m| has_id(m, id))
+                            .context("backend sent no JSON-RPC reply")?;
+                    }
+                }
+            }
+        }
     };
-    let message: Value =
-        serde_json::from_str(payload).context("backend sent malformed JSON-RPC")?;
-    if let Some(error) = message.get("error") {
+    reply_result(reply)
+}
+
+fn has_id(message: &Value, id: u64) -> bool {
+    message.get("id").and_then(Value::as_u64) == Some(id)
+}
+
+fn reply_result(reply: Value) -> Result<Value> {
+    if let Some(error) = reply.get("error") {
         bail!(
             "{}",
             error
@@ -286,30 +299,135 @@ fn rpc_result(body: &str) -> Result<Value> {
                 .unwrap_or("backend error")
         );
     }
-    message.get("result").cloned().context("no result in reply")
+    reply.get("result").cloned().context("no result in reply")
+}
+
+/// Incremental SSE parsing: bytes go in, the JSON payload of each complete
+/// event comes out. Events whose data is not JSON are skipped.
+#[derive(Default)]
+struct SseEvents {
+    buffer: Vec<u8>,
+}
+
+impl SseEvents {
+    fn push(&mut self, chunk: &[u8]) {
+        self.buffer.extend_from_slice(chunk);
+    }
+
+    /// Terminate a final event the server did not close with a blank line.
+    fn finish(&mut self) {
+        self.buffer.extend_from_slice(b"\n\n");
+    }
+}
+
+impl Iterator for SseEvents {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Value> {
+        loop {
+            let end = self
+                .buffer
+                .windows(2)
+                .position(|w| w == b"\n\n")
+                .map(|i| (i, 2))
+                .into_iter()
+                .chain(
+                    self.buffer
+                        .windows(4)
+                        .position(|w| w == b"\r\n\r\n")
+                        .map(|i| (i, 4)),
+                )
+                .min_by_key(|(i, _)| *i)?;
+            let event: Vec<u8> = self.buffer.drain(..end.0 + end.1).collect();
+            let event = String::from_utf8_lossy(&event[..end.0]);
+            let data: Vec<&str> = event
+                .lines()
+                .filter_map(|l| l.strip_prefix("data:"))
+                .map(|d| d.strip_prefix(' ').unwrap_or(d))
+                .collect();
+            if let Ok(message) = serde_json::from_str(&data.join("\n")) {
+                return Some(message);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn reads_a_result_out_of_an_sse_frame() {
-        let body =
-            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\n";
-        assert_eq!(rpc_result(body).unwrap(), json!({"ok": true}));
+    fn events(chunks: &[&str]) -> Vec<Value> {
+        let mut events = SseEvents::default();
+        let mut out = Vec::new();
+        for chunk in chunks {
+            events.push(chunk.as_bytes());
+            out.extend(events.by_ref());
+        }
+        events.finish();
+        out.extend(events);
+        out
     }
 
     #[test]
-    fn reads_a_result_out_of_plain_json() {
-        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#;
-        assert_eq!(rpc_result(body).unwrap(), json!({"ok": true}));
+    fn reads_events_split_across_chunks() {
+        let got = events(&[
+            "event: message\ndata: {\"id\":",
+            "1}\n\ndata: {\"id\":2}\n\n",
+        ]);
+        assert_eq!(got, [json!({"id": 1}), json!({"id": 2})]);
+    }
+
+    #[test]
+    fn joins_multi_line_data_and_accepts_crlf() {
+        let got = events(&["data: {\"id\":2,\r\ndata: \"result\":{}}\r\n\r\n"]);
+        assert_eq!(got, [json!({"id": 2, "result": {}})]);
+    }
+
+    #[test]
+    fn a_final_event_without_a_blank_line_still_counts() {
+        assert_eq!(events(&["data: {\"id\":1}"]), [json!({"id": 1})]);
+    }
+
+    #[test]
+    fn skips_events_that_carry_no_json() {
+        let got = events(&[": keepalive\n\nevent: ping\n\ndata: {\"id\":1}\n\n"]);
+        assert_eq!(got, [json!({"id": 1})]);
     }
 
     #[test]
     fn surfaces_the_json_rpc_error_message() {
-        let body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"no session"}}"#;
-        assert_eq!(rpc_result(body).unwrap_err().to_string(), "no session");
+        let reply = json!({"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"no session"}});
+        assert_eq!(reply_result(reply).unwrap_err().to_string(), "no session");
+    }
+
+    /// Reading stops at the reply, so a server that keeps the stream open
+    /// afterwards does not hold the dashboard request.
+    #[tokio::test]
+    async fn stops_reading_at_the_reply_over_sse() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let _ = socket.read(&mut [0; 1024]).await;
+            let _ = socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n\
+                      data: {\"method\":\"notifications/progress\"}\n\n\
+                      data: {\"id\":2,\"result\":{\"ok\":true}}\n\n",
+                )
+                .await;
+            // Hold the connection open, as a server keeping the stream does.
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+
+        let response = reqwest::get(url).await.unwrap();
+        let result =
+            tokio::time::timeout(std::time::Duration::from_secs(5), rpc_result(response, 2))
+                .await
+                .expect("waited for the stream to end");
+        assert_eq!(result.unwrap(), json!({"ok": true}));
     }
 
     /// Dropping the session wherever the future stopped must still end it at
@@ -322,6 +440,7 @@ mod tests {
         let url = format!("http://{}/mcp", listener.local_addr().unwrap());
         drop(Session {
             id: Some("abc".into()),
+            version: PROTOCOL_VERSION.into(),
             teardown: Some(
                 reqwest::Client::new()
                     .delete(url)

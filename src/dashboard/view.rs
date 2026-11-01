@@ -1,10 +1,4 @@
-//! What the page is made of: the shape each template renders from, and the one
-//! constructor behind both the whole page and a single re-rendered section.
-//!
-//! Nothing here talks to a backend. `build` reads this gateway's own database
-//! and returns, so what a page costs is what our Postgres costs; everything
-//! that has to ask somebody else — a setting's choices, whether a credential
-//! still works — is an endpoint htmx calls once the page is already up.
+//! The views templates render from. Nothing here talks to a backend.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -14,11 +8,10 @@ use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
 use futures_util::stream;
 
-use crate::config::Mcp;
+use crate::config::{Config, Mcp};
 use crate::dashboard::options::Verified;
-use crate::error::{AppError, AppResult};
-use crate::state::AppState;
-use crate::store::Session;
+use crate::error::AppError;
+use crate::store::{CredentialSet, TokenMeta};
 
 #[derive(Template)]
 #[template(path = "index.html")]
@@ -38,9 +31,7 @@ pub(super) struct McpSectionTemplate {
     pub(super) m: McpView,
 }
 
-/// The connection badge on its own, which is what the status endpoint answers
-/// with. Same template the section includes, so the pill htmx swaps in cannot
-/// look like a different thing from the one it replaced.
+/// The connection badge on its own: the status endpoint's answer.
 #[derive(Template)]
 #[template(path = "mcp_badge.html")]
 pub(super) struct McpBadgeTemplate {
@@ -52,8 +43,7 @@ pub(super) struct McpBadgeTemplate {
 pub(super) struct FieldOptionsTemplate {
     pub(super) mcp_id: String,
     pub(super) field_id: String,
-    /// Label of the backend's own default, named in the placeholder so the
-    /// empty choice says what it will actually do.
+    /// Label of the backend's own default, named in the empty choice.
     pub(super) account_default: Option<String>,
     pub(super) options: Vec<OptionView>,
 }
@@ -61,7 +51,6 @@ pub(super) struct FieldOptionsTemplate {
 #[derive(Template)]
 #[template(path = "field_options_error.html")]
 pub(super) struct FieldOptionsErrorTemplate {
-    /// It stands in the control's slot, so it answers to the control's id.
     pub(super) mcp_id: String,
     pub(super) field_id: String,
     pub(super) error: String,
@@ -79,28 +68,22 @@ pub(super) struct FieldStatusTemplate {
 pub(super) struct FieldView {
     pub(super) id: String,
     pub(super) label: String,
-    /// `password` or `text` — secrets are never rendered back into the page.
+    /// `password` or `text`.
     pub(super) input_type: String,
     pub(super) secret: bool,
-    /// Whether something is stored for this field. Only shown for secrets: a
-    /// visible field displays its own value, but a password box looks the same
-    /// whether one is held or not.
+    /// Whether something is stored; shown for secrets, whose box is empty.
     pub(super) is_set: bool,
     pub(super) placeholder: String,
-    /// Prefilled with the stored value when the field is not a secret (so a
-    /// server URL can be edited, not retyped). Empty for secrets.
+    /// The stored value, for non-secrets only.
     pub(super) value: String,
     pub(super) required: bool,
-    /// This field's choices come from the backend, so it is offered only after
-    /// the account is connected — before that there is nobody to ask.
+    /// Choices come from the backend, so it is offered only once connected.
     pub(super) from_backend: bool,
     /// Endpoint serving those choices. Empty until credentials exist.
     pub(super) options_url: String,
 }
 
-/// What a mutation wants to say about itself. Carried on the section because
-/// that is what gets re-rendered — there is no page load left to hang a flash
-/// message on.
+/// What a mutation says about itself, shown at the top of its section.
 #[derive(Default)]
 pub(super) struct Notice {
     pub(super) text: String,
@@ -108,10 +91,6 @@ pub(super) struct Notice {
 }
 
 impl Notice {
-    pub(super) fn none() -> Self {
-        Self::default()
-    }
-
     pub(super) fn said(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
@@ -128,31 +107,21 @@ impl Notice {
 }
 
 pub(super) struct McpView {
-    /// Green claims a backend confirmed the credentials, so it is only ever set
-    /// when one actually did — or when there is no check declared, which is the
-    /// one case the answer is known without asking.
+    /// A backend confirmed the credentials, or none declares a check.
     pub(super) verified: bool,
     pub(super) rejected: bool,
-    /// Endpoint that will say which of those two it is. Non-empty exactly when
-    /// a backend has to be asked, which is what the badge keys off: the page
-    /// renders a pending pill and htmx replaces it, and every other MCP gets
-    /// its final badge in the first response.
+    /// Non-empty while a backend has yet to be asked: the badge renders as
+    /// pending and fetches its replacement from here.
     pub(super) status_url: String,
     pub(super) notice: Notice,
     pub(super) id: String,
     pub(super) name: String,
     pub(super) has_credential: bool,
-    /// Takes no credentials — connected on login, with no form to fill in and
-    /// nothing to disconnect.
+    /// Takes no credentials: connected on login, nothing to disconnect.
     pub(super) public: bool,
-    /// Whether any field is a setting rather than a credential — shown outside
-    /// the credential form, since that is not what it is.
+    /// Whether any field is a backend-sourced setting, shown outside the form.
     pub(super) has_settings: bool,
     pub(super) updated_at: String,
-    /// Said in words, because the server has no idea what timezone the reader
-    /// is in — no request header carries one — and an exact time in the wrong
-    /// zone is worse than none. The precise value stays in the element for
-    /// anyone who wants it.
     pub(super) updated_ago: String,
     pub(super) connector_url: String,
     pub(super) claude_code_cmd: String,
@@ -167,42 +136,30 @@ pub(super) struct DashboardTemplate {
     pub(super) mcps: Vec<McpView>,
 }
 
-/// The credential form posts one input per configured field, so the shape
-/// isn't known at compile time.
-///
-/// A plain map, not a newtype around one: `serde_urlencoded` presents a form
-/// body as a map and has no `deserialize_newtype_struct` to unwrap it, so a
-/// wrapper is rejected at the extractor with "invalid type: map".
+/// One input per configured field. A plain map: `serde_urlencoded` cannot
+/// deserialize a newtype around one.
 pub type CredentialForm = HashMap<String, String>;
 
 impl McpView {
-    /// One MCP as the page shows it. Shared because a mutation re-renders a
-    /// single section, and a second construction path would be a second place
-    /// for the badge, the timestamp and the settings to disagree.
-    pub(super) async fn build(state: &AppState, session: &Session, m: &Mcp) -> AppResult<Self> {
-        let base = state.config.public_url.trim_end_matches('/');
-        // Non-secret values are read back so they can be edited in place;
-        // secrets are never decrypted for rendering. Fetched whenever anything
-        // is stored, not only when a visible field wants prefilling: a secret
-        // needs it too, to say that it is set.
-        let (stored, meta) = state
-            .store
-            .get_credentials_with_meta(&session.sub, &m.id, m.primary_field())
-            .await
-            .map_err(AppError::Internal)?
-            .unzip();
-        // A public MCP is connected the moment the user has logged in — there
-        // is nothing to store, so nothing to wait for.
-        let (has_credential, updated_at, updated_ago) = match (m.is_public(), meta) {
-            (true, _) => (true, String::new(), String::new()),
-            (false, Some(meta)) => (true, meta.updated_at_rfc3339(), meta.updated_ago()),
-            (false, None) => (false, String::new(), String::new()),
-        };
+    /// One MCP as the page shows it, from what is stored for it. The page and
+    /// a re-rendered section both come through here.
+    pub(super) fn new(
+        config: &Config,
+        m: &Mcp,
+        stored: Option<(CredentialSet, TokenMeta)>,
+    ) -> Self {
+        let (stored, meta) = stored.unzip();
+        let has_credential = m.public || meta.is_some();
+        let (updated_at, updated_ago) = meta
+            .filter(|_| !m.public)
+            .map(|meta| (meta.updated_at_rfc3339(), meta.updated_ago()))
+            .unwrap_or_default();
 
         let fields: Vec<FieldView> = m
             .fields
             .iter()
             .map(|f| FieldView {
+                // Secrets are never rendered back into the page.
                 value: match f.secret {
                     true => String::new(),
                     false => stored
@@ -214,8 +171,8 @@ impl McpView {
                 is_set: stored.as_ref().is_some_and(|s| s.contains_key(&f.id)),
                 input_type: if f.secret { "password" } else { "text" }.to_string(),
                 secret: f.secret,
-                // A default is advertised as a placeholder, not prefilled: the
-                // box stays visibly empty so it reads as "leave it alone".
+                // A default is a placeholder, not a prefill, so the box reads as
+                // "leave it alone".
                 placeholder: match (&f.hint, &f.default) {
                     (Some(hint), _) => hint.clone(),
                     (None, Some(default)) => format!("Default: {default}"),
@@ -232,14 +189,9 @@ impl McpView {
             })
             .collect();
 
-        // Somebody has to be asked exactly when there is a check declared and a
-        // credential to run it against. Everything else the badge needs is
-        // already here, so only these MCPs pay for a round trip — and they pay
-        // for it after the page is on screen rather than in front of it.
-        let needs_check = has_credential && !m.is_public() && m.verify.is_some();
-
-        let connector_url = format!("{base}/{}", m.id);
-        Ok(McpView {
+        let needs_check = has_credential && !m.public && m.verify.is_some();
+        let connector_url = format!("{}/{}", config.public_url.trim_end_matches('/'), m.id);
+        McpView {
             claude_code_cmd: format!(
                 "claude mcp add --transport http --scope user {} {}",
                 m.id, connector_url
@@ -248,37 +200,30 @@ impl McpView {
             id: m.id.clone(),
             name: m.name.clone(),
             has_credential,
-            // A backend with no check declared is taken at its word. Withholding
-            // green would imply a doubt we have no grounds for — we never asked.
+            // With no check declared there is nothing to doubt.
             verified: m.verify.is_none(),
             rejected: false,
             status_url: match needs_check {
                 true => format!("/dashboard/{}/status", m.id),
                 false => String::new(),
             },
-            public: m.is_public(),
+            public: m.public,
             updated_at,
             updated_ago,
             connector_url,
             key_help_url: m.key_help_url.clone().unwrap_or_default(),
             fields,
-            notice: Notice::none(),
-        })
+            notice: Notice::default(),
+        }
     }
 
-    /// What the badge answers to. One definition because the page renders it
-    /// and the status endpoint patches it, and a patch aimed at an id nothing
-    /// carries is silent — it neither errors nor appears.
+    /// The badge's element id, which the status patch targets.
     pub(super) fn status_id(&self) -> String {
         format!("status-{}", self.id)
     }
 
-    /// Settle the badge with what a backend actually said.
-    ///
-    /// Clearing `status_url` is what stops the swapped-in pill asking again:
-    /// the fragment renders from the same template as the placeholder, so a
-    /// still-set URL would give it another `hx-trigger="load"` and it would
-    /// fetch itself forever.
+    /// Settle the badge with what a backend said. Clearing `status_url` stops
+    /// the replacement badge from fetching itself again.
     pub(super) fn checked(mut self, verdict: Verified) -> Self {
         self.verified = verdict == Verified::Yes;
         self.rejected = verdict == Verified::Rejected;
@@ -287,19 +232,7 @@ impl McpView {
     }
 }
 
-/// Empty on failure: a fragment that will not render is a template bug, and the
-/// page is more use with a placeholder in that slot than not at all.
-/// The one place an unknown MCP id is turned away.
-pub(super) fn mcp_or_404<'a>(state: &'a AppState, id: &str) -> AppResult<&'a Mcp> {
-    state
-        .config
-        .mcp(id)
-        .ok_or_else(|| AppError::BadRequest("unknown mcp".into()))
-}
-
-/// The `data:` payload of a `datastar-patch-elements` event: every line of
-/// `html` prefixed with `elements `. Split out from [`render`] so the prefixing
-/// is testable without going near `Event`'s internals.
+/// The `data:` payload of a `datastar-patch-elements` event.
 pub(super) fn patch_elements_data(html: &str) -> String {
     html.lines()
         .map(|line| format!("elements {line}"))
@@ -307,24 +240,12 @@ pub(super) fn patch_elements_data(html: &str) -> String {
         .join("\n")
 }
 
-/// A fragment, as the one SSE event Datastar expects back.
-///
-/// Every mutation and every lazy load answers this way: one event, then the
-/// stream ends. Nothing here is long-lived — unlike mariastew, which holds a
-/// stream open and pushes rows down it as aria2 moves — but the event and its
-/// payload are the same shape, so the two repositories mean the same thing by
-/// a patch.
-///
-/// The client morphs by element id, which is why everything patchable in these
-/// templates now carries one. That is the real change from what this replaced:
-/// htmx targeted by relation — `closest section`, `next [data-status]` — so the
-/// markup only had to be *positioned* correctly, where now it has to be *named*
-/// correctly.
+/// A fragment as a single Datastar patch, morphed into the page by element id.
 pub(super) fn render<T: Template>(template: T) -> Response {
-    let html = template.render().unwrap_or_else(|e| {
-        tracing::error!(error = %e, "fragment render failed");
-        String::new()
-    });
+    let html = match template.render() {
+        Ok(html) => html,
+        Err(e) => return AppError::Internal(e.into()).into_response(),
+    };
     let event = Event::default()
         .event("datastar-patch-elements")
         .data(patch_elements_data(&html));
@@ -341,7 +262,7 @@ mod tests {
             verified: false,
             rejected: false,
             status_url: "/dashboard/caldav/status".into(),
-            notice: Notice::none(),
+            notice: Notice::default(),
             id: "caldav".into(),
             name: "CalDAV".into(),
             has_credential: true,
@@ -394,10 +315,8 @@ mod tests {
             .collect()
     }
 
-    /// The one way this shape can go wrong: the answer renders from the same
-    /// template as the question, so an answer that kept its URL would carry
-    /// another `data-init` and fetch itself for as long as the tab is open — a
-    /// backend hammered by every idle dashboard.
+    /// An answer that kept its URL would fetch itself for as long as the tab is
+    /// open.
     #[test]
     fn a_settled_badge_does_not_ask_again() {
         assert!(badge(pending()).contains("data-init=\"@get('/dashboard/caldav/status')\""));
@@ -409,9 +328,7 @@ mod tests {
         }
     }
 
-    /// Every badge answers to the id the status endpoint patches. A patch aimed
-    /// at an id nothing carries is silent — no error, no swap, just a pill that
-    /// stays pending — so this is worth stating rather than assuming.
+    /// A patch aimed at an id nothing carries fails silently.
     #[test]
     fn the_badge_carries_the_id_the_patch_will_look_for() {
         for verdict in [Verified::Yes, Verified::Rejected, Verified::Unknown] {
@@ -429,19 +346,14 @@ mod tests {
         assert!(badge(pending().checked(Verified::Unknown)).contains("Configured"));
     }
 
-    /// The pending pill is only ever shown for a credential we hold, so it must
-    /// win over the badge for one we don't — otherwise a check that is still in
-    /// flight reads as "Not configured".
+    /// A check in flight must not read as "Not configured".
     #[test]
     fn pending_is_not_mistaken_for_unconfigured() {
         assert!(!badge(pending()).contains("Not configured"));
     }
 
-    /// The skeleton and the control that replaces it may differ in how they
-    /// look and in nothing else. A class that changes the box on one and not
-    /// the other moves the page when htmx swaps them, which is a bug this
-    /// pairing has already had once — so the assertion is on the whole
-    /// difference between them, not on a list of classes to keep in step.
+    /// The skeleton and the control replacing it may differ only in surface; a
+    /// box-model class on one alone makes the page jump on the swap.
     #[test]
     fn a_loading_field_differs_from_a_loaded_one_only_in_surface() {
         let skeleton = select_classes(
@@ -485,11 +397,8 @@ mod tests {
         );
     }
 
-    /// Datastar reads a patch as one `elements` line per line of markup, and
-    /// `Event::data` turns an embedded newline into a repeated `data:` field —
-    /// which is what makes the joined string arrive as the several lines it
-    /// was. A fragment sent as one unprefixed blob parses as nothing and is
-    /// dropped without complaint, so the prefixing is worth stating.
+    /// Datastar reads one `elements` line per line of markup; an unprefixed
+    /// line is dropped silently.
     #[test]
     fn a_patch_prefixes_every_line_it_sends() {
         assert_eq!(patch_elements_data("<p>one</p>"), "elements <p>one</p>");
@@ -502,9 +411,8 @@ mod tests {
         assert_eq!(patch_elements_data("<p>x</p>\n"), "elements <p>x</p>");
     }
 
-    /// Both full pages, because the whole use of a version in the corner is
-    /// being able to read it off whichever page is in front of you — and the
-    /// login page is the one you are looking at when the dashboard won't load.
+    /// Both pages, since the login page is the one in front of you when the
+    /// dashboard won't load.
     #[test]
     fn every_page_says_which_build_it_is() {
         let want = format!("v{}", crate::VERSION);
@@ -521,17 +429,9 @@ mod tests {
     }
 }
 
-/// The dashboard as a static file, so how it looks can be reviewed without a
-/// login.
-///
-/// Standing the real thing up needs Hydra and the login provider, which is more
-/// than a spacing change is worth — and the alternative is guessing, which is
-/// how the loading field ended up indistinguishable from an empty one. Fixtures
-/// rather than a database: every state the section has, on one page, including
-/// the ones a given account may never be in.
-///
-/// `mise run preview`. Ignored by default because it writes a file and answers
-/// a question CI is not asking.
+/// The dashboard rendered from fixtures to a static file, every section state
+/// on one page, so a layout change can be reviewed without a login.
+/// `mise run preview`.
 #[cfg(test)]
 mod preview {
     use super::*;
@@ -541,7 +441,7 @@ mod preview {
             verified: false,
             rejected: false,
             status_url: String::new(),
-            notice: Notice::none(),
+            notice: Notice::default(),
             id: id.into(),
             name: name.into(),
             has_credential: true,
@@ -640,10 +540,7 @@ mod preview {
                 r#"<script type="module" src="/assets/datastar.js"></script>"#,
                 "",
             );
-        // Datastar is dropped along with the stylesheet link, so the page keeps
-        // the states it was rendered in: the skeleton stays a skeleton and the
-        // badge stays pending, which is the half that is otherwise hardest to
-        // catch in the act.
+        // Without Datastar the pending states stay on screen.
         let out = std::env::var("PREVIEW_OUT").expect("PREVIEW_OUT");
         std::fs::write(&out, html).unwrap_or_else(|e| panic!("writing {out}: {e}"));
     }

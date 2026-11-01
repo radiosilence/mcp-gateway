@@ -1,40 +1,30 @@
-{% import "controls.html" as ui %}
-<!doctype html>
-<html lang="en" class="h-full">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dashboard · MCP Gateway</title>
-  <link rel="stylesheet" href="/assets/app.css" />
-  <script type="module" src="/assets/app.js"></script>
-  <script type="module" src="/assets/datastar.js"></script>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔌</text></svg>" />
-</head>
-<body class="h-full bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-  <div class="mx-auto max-w-2xl px-4 py-10">
-    <header class="flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-blue-600 text-xl shadow">🔌</div>
-        <div>
-          <h1 class="text-lg font-semibold leading-tight">MCP Gateway</h1>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Signed in as {{ login }}</p>
-        </div>
+{% extends "base.html" %}
+{% block title %}Dashboard · MCP Gateway{% endblock %}
+{% block body %}
+<div class="mx-auto max-w-2xl px-4 py-10">
+  <header class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-linear-to-br from-indigo-500 to-blue-600 text-xl shadow-sm">🔌</div>
+      <div>
+        <h1 class="text-lg leading-tight font-semibold">MCP Gateway</h1>
+        <p class="muted text-xs">Signed in as {{ login }}</p>
       </div>
-      <form method="post" action="/logout">
-        <button class="text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">Sign out</button>
-      </form>
-    </header>
+    </div>
+    <form method="post" action="/logout">
+      <button class="muted text-sm hover:text-slate-900 dark:hover:text-white">Sign out</button>
+    </form>
+  </header>
 
+  <p id="flash" role="alert" hidden class="warn mt-6 text-sm"></p>
 
-    {% if mcps.is_empty() %}
-    <p class="mt-8 text-sm text-slate-500 dark:text-slate-400">No MCPs configured. Add entries to the gateway's registry (<code>MCP_REGISTRY</code>).</p>
-    {% endif %}
+  {% if mcps.is_empty() %}
+  <p class="muted mt-8 text-sm">No MCPs configured. Add entries to the gateway's registry (<code>MCP_REGISTRY</code>).</p>
+  {% endif %}
 
-    {% for m in mcps %}
-      {% include "mcp_section.html" %}
-    {% endfor %}
+  {% for m in mcps %}
+  {% include "mcp_section.html" %}
+  {% endfor %}
 
-    {% include "footer.html" %}
-  </div>
-</body>
-</html>
+  {% include "footer.html" %}
+</div>
+{% endblock %}

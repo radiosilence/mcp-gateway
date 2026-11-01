@@ -1,12 +1,9 @@
 //! The views templates render from. Nothing here talks to a backend.
 
 use std::collections::HashMap;
-use std::convert::Infallible;
 
 use askama::Template;
-use axum::response::sse::Event;
-use axum::response::{IntoResponse, Response, Sse};
-use futures_util::stream;
+use axum::response::{Html, IntoResponse, Response};
 
 use crate::config::{Config, Mcp};
 use crate::dashboard::options::Verified;
@@ -121,6 +118,8 @@ pub(super) struct McpView {
     pub(super) public: bool,
     /// Whether any field is a backend-sourced setting, shown outside the form.
     pub(super) has_settings: bool,
+    /// Whether a secret is stored, so a blank password box keeps it.
+    pub(super) has_stored_secret: bool,
     pub(super) updated_at: String,
     pub(super) updated_ago: String,
     pub(super) connector_url: String,
@@ -197,6 +196,7 @@ impl McpView {
                 m.id, connector_url
             ),
             has_settings: fields.iter().any(|f| !f.options_url.is_empty()),
+            has_stored_secret: fields.iter().any(|f| f.secret && f.is_set),
             id: m.id.clone(),
             name: m.name.clone(),
             has_credential,
@@ -232,24 +232,13 @@ impl McpView {
     }
 }
 
-/// The `data:` payload of a `datastar-patch-elements` event.
-pub(super) fn patch_elements_data(html: &str) -> String {
-    html.lines()
-        .map(|line| format!("elements {line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// A fragment as a single Datastar patch, morphed into the page by element id.
+/// A fragment as `text/html`, which Datastar morphs into the page by the ids of
+/// its top-level elements.
 pub(super) fn render<T: Template>(template: T) -> Response {
-    let html = match template.render() {
-        Ok(html) => html,
-        Err(e) => return AppError::Internal(e.into()).into_response(),
-    };
-    let event = Event::default()
-        .event("datastar-patch-elements")
-        .data(patch_elements_data(&html));
-    Sse::new(stream::once(async move { Ok::<_, Infallible>(event) })).into_response()
+    match template.render() {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => AppError::Internal(e.into()).into_response(),
+    }
 }
 
 #[cfg(test)]
@@ -268,6 +257,7 @@ mod tests {
             has_credential: true,
             public: false,
             has_settings: false,
+            has_stored_secret: false,
             updated_at: String::new(),
             updated_ago: String::new(),
             connector_url: String::new(),
@@ -319,7 +309,7 @@ mod tests {
     /// open.
     #[test]
     fn a_settled_badge_does_not_ask_again() {
-        assert!(badge(pending()).contains("data-init=\"@get('/dashboard/caldav/status')\""));
+        assert!(badge(pending()).contains(r#"data-url="/dashboard/caldav/status""#));
         for verdict in [Verified::Yes, Verified::Rejected, Verified::Unknown] {
             assert!(
                 !badge(pending().checked(verdict)).contains("data-init"),
@@ -397,20 +387,6 @@ mod tests {
         );
     }
 
-    /// Datastar reads one `elements` line per line of markup; an unprefixed
-    /// line is dropped silently.
-    #[test]
-    fn a_patch_prefixes_every_line_it_sends() {
-        assert_eq!(patch_elements_data("<p>one</p>"), "elements <p>one</p>");
-        assert_eq!(
-            patch_elements_data("<div>\n  <p>two</p>\n</div>"),
-            "elements <div>\nelements   <p>two</p>\nelements </div>"
-        );
-        // Askama leaves a trailing newline on most fragments; `lines()` drops
-        // it rather than emitting a bare `elements ` the client has to ignore.
-        assert_eq!(patch_elements_data("<p>x</p>\n"), "elements <p>x</p>");
-    }
-
     /// Both pages, since the login page is the one in front of you when the
     /// dashboard won't load.
     #[test]
@@ -447,6 +423,7 @@ mod preview {
             has_credential: true,
             public: false,
             has_settings: false,
+            has_stored_secret: false,
             updated_at: "2026-08-20T10:00:00Z".into(),
             updated_ago: "3 days ago".into(),
             connector_url: format!("https://mcp.blit.cc/{id}"),
@@ -534,10 +511,6 @@ mod preview {
             )
             .replace(
                 r#"<script type="module" src="/assets/app.js"></script>"#,
-                "",
-            )
-            .replace(
-                r#"<script type="module" src="/assets/datastar.js"></script>"#,
                 "",
             );
         // Without Datastar the pending states stay on screen.

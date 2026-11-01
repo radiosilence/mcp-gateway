@@ -1,38 +1,50 @@
-{#- Every field's box, and only its box. Shared so the placeholder and the
-     control that replaces it cannot drift: they already did once, when a class
-     on one and not the other changed the box model and the swap visibly moved
-     the page. Nothing here paints — the surface belongs to each state below,
-     which is what lets a skeleton look different without risking that again. -#}
-{% macro field_box() %}mt-1.5 w-full rounded-lg border-0 px-3 py-2 text-sm ring-1 ring-inset outline-none{% endmacro %}
+{#- A field's box. The skeleton and the control that replaces it share it and
+    differ only in surface, so the swap cannot move the page. -#}
+{% macro field_box() %}mt-1.5 w-full rounded-lg border-0 px-3 py-2 text-sm ring-1 ring-inset outline-hidden{% endmacro %}
 
-{#- A field you can type in or choose from. -#}
 {% macro field_control() %}{% call field_box() %}{% endcall %} bg-slate-100 dark:bg-slate-800 ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500{% endmacro %}
 
-{#- The same field while its choices are still on their way from a backend.
-     Filled rather than empty: an empty control that pulses reads as a setting
-     with nothing chosen, which is a worse thing to say than "not here yet".
-
-     The surface is stated per state rather than layered over the control's,
-     because two `bg-*` utilities on one element is a coin toss — equal
-     specificity, so whichever Tailwind happens to emit last wins. -#}
+{#- Filled rather than empty: an empty pulsing control reads as "nothing
+    chosen". The surface is stated in full here rather than layered over the
+    control's, because two `bg-*` utilities on one element is a coin toss. -#}
 {% macro field_skeleton() %}{% call field_box() %}{% endcall %} pointer-events-none animate-pulse text-transparent bg-slate-200 dark:bg-slate-700 ring-slate-200 dark:ring-slate-700{% endmacro %}
 
-{#- The line under a setting. One definition: the page renders it empty and a
-     save replaces it, and those drifting apart is how the last one broke.
+{% macro field_status(id, text, bad) %}<span id="{{ id }}" class="mt-1 block text-xs {% if bad %}warn{% else %}faint{% endif %}">{{ text }}</span>{% endmacro %}
 
-     It carries an id because Datastar patches by id — under htmx this was
-     reached as `next [data-status]`, which needed only to be in the right
-     place. Being named instead is the whole shape of the migration. -#}
-{% macro field_status(id, text, bad) %}<span id="{{ id }}" class="mt-1 block text-xs {% if bad %}text-amber-600 dark:text-amber-400{% else %}text-slate-400 dark:text-slate-500{% endif %}">{{ text }}</span>{% endmacro %}
+{#- Colours arrive as whole class names because Tailwind only sees literals. A
+    non-empty `load_url` makes the badge fetch its own replacement. -#}
+{% macro badge(id, colours, dot, label, load_url) %}<span id="{{ id }}"{% if !load_url.is_empty() %} data-url="{{ load_url }}" data-init="@get(el.dataset.url)" aria-busy="true"{% endif %} class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 {{ colours }}"><span class="h-1.5 w-1.5 rounded-full {{ dot }}"></span> {{ label }}</span>{% endmacro %}
 
-{#- The badge. Colours arrive as whole class names rather than being built from
-     a tone, because Tailwind scans for literals — `bg-{tone}-50` generates
-     nothing and the badge renders unstyled. Structure is shared; the palette
-     stays visible at the call site.
+{% macro copy_row(summary, intro, value) %}
+<details class="rounded-lg ring-1 ring-inset ring-slate-200 dark:ring-slate-700 open:bg-slate-50 dark:open:bg-slate-800/50">
+  <summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-medium">{{ summary }}</summary>
+  <div class="px-4 pt-1 pb-4">
+    <p class="muted text-xs">{{ intro }}</p>
+    <div class="mt-2 flex items-center gap-2">
+      <code class="code-box flex-1 overflow-x-auto">{{ value }}</code>
+      <button type="button" value="{{ value }}" data-on:click="@copy(el.value)" class="shrink-0 rounded-md bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:opacity-90 dark:bg-white dark:text-slate-900">Copy</button>
+    </div>
+  </div>
+</details>
+{% endmacro %}
 
-     A non-empty `load_url` makes it fetch its own replacement — `data-init`
-     rather than a `load` trigger, because Datastar has no such event: `init`
-     is its once-when-set-up plugin. Here rather than as a second macro because
-     the pill that asks and the pill that answers have to be the same size, or
-     the swap moves the page. -#}
-{% macro badge(id, colours, dot, label, load_url) %}<span id="{{ id }}"{% if !load_url.is_empty() %} data-init="@get('{{ load_url }}')" aria-busy="true"{% endif %} class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 {{ colours }}"><span class="h-1.5 w-1.5 rounded-full {{ dot }}"></span> {{ label }}</span>{% endmacro %}
+{#- The credential form, for connecting and for editing once connected. Fields
+    whose choices come from the backend are settings, shown outside it. The
+    real `method` and `action` keep a submit before Datastar loads off the
+    query string. -#}
+{% macro credential_form(m) %}
+<form method="post" action="/dashboard/{{ m.id }}/token"
+      data-on:submit="@post(el.getAttribute('action'), {contentType: 'form'})"
+      class="mt-3 space-y-3">
+  {% if m.has_stored_secret %}<p class="muted text-xs">Leave a password blank to keep the stored one.</p>{% endif %}
+  {% for f in m.fields %}{% if !f.from_backend %}
+  <label class="block">
+    <span class="muted text-xs">{{ f.label }}{% if !f.required %} <span class="faint">(optional)</span>{% endif %}{% if f.secret && f.is_set %} <span class="text-emerald-600 dark:text-emerald-400">· set</span>{% endif %}</span>
+    <input type="{{ f.input_type }}" name="{{ f.id }}" placeholder="{{ f.placeholder }}"
+           value="{{ f.value }}" autocomplete="off" {% if f.required && !(f.secret && f.is_set) %}required{% endif %}
+           class="{% call field_control() %}{% endcall %}" />
+  </label>
+  {% endif %}{% endfor %}
+  <button type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500">{% if m.has_credential %}Save{% else %}Connect{% endif %}</button>
+</form>
+{% endmacro %}

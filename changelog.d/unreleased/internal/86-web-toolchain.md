@@ -1,0 +1,1 @@
+- **`web/` is built with aube, rolldown and the Tailwind v4 CLI, and checked with tsc, oxlint and oxfmt.** `mise run web` rebuilds the committed assets and `mise run web-check` checks the sources; CI runs both for any change under `web/`, the templates or the toolchain files.

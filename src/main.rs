@@ -45,8 +45,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Embedded rather than loaded from a CDN: credentials are typed into these
 /// pages, so no third-party script gets DOM access to them.
 const APP_CSS: &str = include_str!("../assets/app.css");
+/// `web/app.ts` and the vendored Datastar, bundled (`mise run web`).
 const APP_JS: &str = include_str!("../assets/app.js");
-const DATASTAR_JS: &str = include_str!("../assets/datastar.js");
 
 async fn app_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
@@ -94,13 +94,6 @@ async fn security_headers(request: axum::extract::Request, next: middleware::Nex
     );
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     response
-}
-
-async fn datastar_js() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        DATASTAR_JS,
-    )
 }
 
 #[tokio::main]
@@ -191,7 +184,6 @@ async fn main() -> Result<()> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
-        .route("/assets/datastar.js", get(datastar_js))
         .route("/logout", post(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
         .route("/dashboard/{mcp_id}/token", post(dashboard::set_credential))
@@ -309,6 +301,24 @@ mod tests {
         assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
     }
 
+    /// Plugin names the bundle registers, whichever quote the minifier chose.
+    fn registered_plugins() -> Vec<&'static str> {
+        let names: Vec<&str> = APP_JS
+            .match_indices("name:")
+            .filter_map(|(i, m)| {
+                let rest = &APP_JS[i + m.len()..];
+                let quote = rest
+                    .chars()
+                    .next()
+                    .filter(|c| matches!(c, '"' | '\'' | '`'))?;
+                let rest = &rest[1..];
+                rest.find(quote).map(|end| &rest[..end])
+            })
+            .collect();
+        assert!(!names.is_empty(), "found no plugin names in the bundle");
+        names
+    }
+
     /// The generated assets are committed; a truncated build would still
     /// compile and only show up as a broken page.
     #[test]
@@ -316,12 +326,8 @@ mod tests {
         assert!(APP_CSS.contains("box-sizing:border-box"), "no preflight");
         assert!(APP_CSS.contains("max-w-2xl"), "utilities missing");
         assert!(
-            APP_JS.contains("data-copy"),
-            "app.js is not the real script"
-        );
-        assert!(
-            DATASTAR_JS.starts_with("// Datastar v1.0.2"),
-            "not the pinned datastar build"
+            APP_JS.contains("datastar-fetch") && registered_plugins().contains(&"copy"),
+            "app.js is not the bundle"
         );
     }
 
@@ -330,20 +336,14 @@ mod tests {
     /// so an upgrade that renames one fails here.
     #[test]
     fn every_datastar_attribute_is_one_datastar_matches() {
-        let registered: Vec<&str> = DATASTAR_JS
-            .match_indices("name:\"")
-            .filter_map(|(i, m)| {
-                let rest = &DATASTAR_JS[i + m.len()..];
-                rest.find('"').map(|end| &rest[..end])
-            })
-            .collect();
+        let registered = registered_plugins();
         assert!(
             registered.contains(&"init") && registered.contains(&"on"),
             "the bundle registers neither `init` nor `on`; the scan is wrong, not the templates"
         );
 
-        // Ours, read by app.js. Datastar ignores it and so should this.
-        const OURS: &[&str] = &["copy"];
+        // Read by expressions; Datastar ignores them.
+        const OURS: &[&str] = &["confirm", "url"];
 
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         for entry in std::fs::read_dir(&dir).expect("templates/") {

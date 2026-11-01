@@ -1,15 +1,8 @@
 {% import "controls.html" as ui %}
-{#- Replaces the skeleton outright, so it carries the control itself and not
-     just its contents. Which entries are offered, which is the account's own
-     and which is stored are decisions, and they are made here where they can
-     be tested rather than in the browser.
-
-     Wrapped in a form so the change can be sent as `contentType: 'form'` and
-     the handler keeps reading one named field. The alternative — binding it to
-     a signal — sends every signal on the page with each request, and this page
-     has one setting per connected MCP. -#}
-<form id="options-{{ mcp_id }}-{{ field_id }}"
-      data-on:change="@patch('/dashboard/{{ mcp_id }}/field/{{ field_id }}', {contentType: 'form'})">
+{#- Replaces the skeleton, so it carries the control and its id. A form so the
+    change posts one named field rather than every signal on the page. -#}
+<form id="options-{{ mcp_id }}-{{ field_id }}" method="post" action="/dashboard/{{ mcp_id }}/field/{{ field_id }}"
+      data-on:change="@patch(el.getAttribute('action'), {contentType: 'form'})">
   <select name="value" class="{% call ui::field_control() %}{% endcall %}">
     <option value="">{% if let Some(d) = account_default %}Account default ({{ d }}){% else %}Account default{% endif %}</option>
 {%- for o in options %}

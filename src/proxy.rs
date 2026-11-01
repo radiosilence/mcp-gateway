@@ -10,7 +10,7 @@
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 
 use crate::state::AppState;
@@ -82,7 +82,7 @@ pub async fn handle(
         headers.remove(h);
     }
     for field in &mcp.fields {
-        headers.remove(field.header.as_str());
+        headers.remove(&field.header);
         let Some(value) = credentials
             .as_ref()
             .and_then(|c| c.get(&field.id))
@@ -90,16 +90,12 @@ pub async fn handle(
         else {
             continue;
         };
-        // Names are validated at config load; values are user input.
-        match (
-            HeaderName::from_bytes(field.header.as_bytes()),
-            HeaderValue::from_str(value),
-        ) {
-            (Ok(name), Ok(mut v)) => {
+        match HeaderValue::from_str(value) {
+            Ok(mut v) => {
                 v.set_sensitive(true);
-                headers.insert(name, v);
+                headers.insert(field.header.clone(), v);
             }
-            _ => tracing::warn!(
+            Err(_) => tracing::warn!(
                 mcp = %id,
                 field = %field.id,
                 "stored credential is not a valid header value; skipping"

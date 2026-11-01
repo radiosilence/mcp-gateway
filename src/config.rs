@@ -2,7 +2,8 @@
 //! key and OIDC client secret are never logged.
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use http::HeaderName;
+use serde::{Deserialize, Deserializer};
 
 /// One value a backend MCP needs from the user, injected into its own header.
 #[derive(Clone, Debug, Deserialize)]
@@ -12,7 +13,8 @@ pub struct CredentialField {
     /// Label shown in the dashboard.
     pub label: String,
     /// Header the backend expects this value in, e.g. `X-CalDAV-Username`.
-    pub header: String,
+    #[serde(deserialize_with = "header_name")]
+    pub header: HeaderName,
     /// Render as a password input and never echo the stored value back.
     #[serde(default = "default_true")]
     pub secret: bool,
@@ -35,6 +37,12 @@ pub struct CredentialField {
     /// what the proxy injects either way.
     #[serde(default)]
     pub sync_mutation: Option<String>,
+}
+
+fn header_name<'de, D: Deserializer<'de>>(d: D) -> Result<HeaderName, D::Error> {
+    let name = String::deserialize(d)?;
+    HeaderName::from_bytes(name.as_bytes())
+        .map_err(|_| serde::de::Error::custom(format!("invalid header name {name:?}")))
 }
 
 fn default_true() -> bool {
@@ -238,12 +246,15 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
     }
 
     if m.fields.is_empty() {
-        let header = m.credential_header.clone().with_context(|| {
+        let header = m.credential_header.as_deref().with_context(|| {
             format!(
                 "MCP {:?} defines neither `credential_header` nor `fields` \
                  (add \"public\": true if it genuinely needs none)",
                 m.id
             )
+        })?;
+        let header = HeaderName::from_bytes(header.as_bytes()).with_context(|| {
+            format!("MCP {:?} has an invalid credential_header {header:?}", m.id)
         })?;
         m.fields = vec![CredentialField {
             id: "token".into(),
@@ -279,13 +290,6 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
             m.id,
             f.id
         );
-        anyhow::ensure!(
-            http::HeaderName::from_bytes(f.header.as_bytes()).is_ok(),
-            "MCP {:?} field {:?} has an invalid header name {:?}",
-            m.id,
-            f.id,
-            f.header
-        );
     }
     Ok(m)
 }
@@ -316,7 +320,7 @@ mod tests {
         let fields = &mcps[0].fields;
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].id, "token");
-        assert_eq!(fields[0].header, "X-Fastmail-Token");
+        assert_eq!(fields[0].header, "x-fastmail-token");
         assert!(fields[0].secret);
         assert!(fields[0].required);
         // The legacy key_hint becomes the field's placeholder.
@@ -480,10 +484,10 @@ mod tests {
         assert_eq!(
             headers,
             [
-                "X-CalDAV-Username",
-                "X-CalDAV-Password",
-                "X-CalDAV-Url",
-                "X-CalDAV-Calendar"
+                "x-caldav-username",
+                "x-caldav-password",
+                "x-caldav-url",
+                "x-caldav-calendar"
             ]
         );
         // Only the password is a secret; the username and server URL are

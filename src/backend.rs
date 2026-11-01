@@ -18,6 +18,9 @@ use crate::store::CredentialSet;
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const SESSION_HEADER: &str = "mcp-session-id";
 const VERSION_HEADER: &str = "mcp-protocol-version";
+/// Far beyond any answer the dashboard asks for; bounds what a misbehaving
+/// backend can make it buffer.
+const MAX_REPLY: usize = 4 << 20;
 
 /// Run `query` against `mcp` as the owner of `credentials`, returning the
 /// query's `data` object.
@@ -55,9 +58,7 @@ async fn post_graphql(
     if !status.is_success() {
         bail!("backend returned {status}");
     }
-    let parsed: Value = response
-        .json()
-        .await
+    let parsed: Value = serde_json::from_slice(&read_capped(response).await?)
         .context("backend returned unparseable JSON")?;
     graphql_data(parsed)
 }
@@ -152,7 +153,7 @@ fn credentialed(
             && let Ok(mut v) = header::HeaderValue::from_str(value)
         {
             v.set_sensitive(true);
-            req = req.header(field.header.as_str(), v);
+            req = req.header(&field.header, v);
         }
     }
     req.header(header::CONTENT_TYPE, "application/json")
@@ -199,7 +200,11 @@ async fn initialize(state: &AppState, mcp: &Mcp, credentials: &CredentialSet) ->
         version: PROTOCOL_VERSION.to_string(),
     };
     let result = rpc_result(response, 1).await?;
-    if let Some(version) = result.get("protocolVersion").and_then(Value::as_str) {
+    if let Some(version) = result
+        .get("protocolVersion")
+        .and_then(Value::as_str)
+        .filter(|v| header::HeaderValue::from_str(v).is_ok())
+    {
         session.version = version.to_string();
     }
 
@@ -259,9 +264,7 @@ async fn rpc_result(response: reqwest::Response, id: u64) -> Result<Value> {
         .is_some_and(|v| v.starts_with("text/event-stream"));
 
     let reply = match is_sse {
-        false => response
-            .json::<Value>()
-            .await
+        false => serde_json::from_slice(&read_capped(response).await?)
             .context("backend sent malformed JSON-RPC")?,
         true => {
             let mut events = SseEvents::default();
@@ -270,6 +273,10 @@ async fn rpc_result(response: reqwest::Response, id: u64) -> Result<Value> {
                 if let Some(reply) = events.by_ref().find(|m| has_id(m, id)) {
                     break reply;
                 }
+                anyhow::ensure!(
+                    events.buffer.len() <= MAX_REPLY,
+                    "backend's reply is larger than {MAX_REPLY} bytes"
+                );
                 match body.next().await {
                     Some(chunk) => events.push(&chunk.context("reading the backend's stream")?),
                     None => {
@@ -283,6 +290,19 @@ async fn rpc_result(response: reqwest::Response, id: u64) -> Result<Value> {
         }
     };
     reply_result(reply)
+}
+
+async fn read_capped(response: reqwest::Response) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        body.extend_from_slice(&chunk.context("reading the backend's reply")?);
+        anyhow::ensure!(
+            body.len() <= MAX_REPLY,
+            "backend's reply is larger than {MAX_REPLY} bytes"
+        );
+    }
+    Ok(body)
 }
 
 fn has_id(message: &Value, id: u64) -> bool {
@@ -400,10 +420,9 @@ mod tests {
         assert_eq!(reply_result(reply).unwrap_err().to_string(), "no session");
     }
 
-    /// Reading stops at the reply, so a server that keeps the stream open
-    /// afterwards does not hold the dashboard request.
-    #[tokio::test]
-    async fn stops_reading_at_the_reply_over_sse() {
+    /// Serve one canned response, then hold the connection open as a server
+    /// keeping a stream does.
+    async fn reply_with(response: Vec<u8>) -> reqwest::Response {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -411,23 +430,62 @@ mod tests {
         tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let _ = socket.read(&mut [0; 1024]).await;
-            let _ = socket
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n\
-                      data: {\"method\":\"notifications/progress\"}\n\n\
-                      data: {\"id\":2,\"result\":{\"ok\":true}}\n\n",
-                )
-                .await;
-            // Hold the connection open, as a server keeping the stream does.
+            let _ = socket.write_all(&response).await;
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         });
+        reqwest::get(url).await.unwrap()
+    }
 
-        let response = reqwest::get(url).await.unwrap();
+    fn with_length(head: &str, body: &str) -> Vec<u8> {
+        format!("{head}\r\ncontent-length: {}\r\n\r\n{body}", body.len()).into_bytes()
+    }
+
+    /// Reading stops at the reply, so a stream held open afterwards does not
+    /// hold the dashboard request.
+    #[tokio::test]
+    async fn stops_reading_at_the_reply_over_sse() {
+        let response = reply_with(
+            b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n\
+              data: {\"method\":\"notifications/progress\"}\n\n\
+              data: {\"id\":2,\"result\":{\"ok\":true}}\n\n"
+                .to_vec(),
+        )
+        .await;
         let result =
             tokio::time::timeout(std::time::Duration::from_secs(5), rpc_result(response, 2))
                 .await
                 .expect("waited for the stream to end");
         assert_eq!(result.unwrap(), json!({"ok": true}));
+    }
+
+    #[tokio::test]
+    async fn reads_a_plain_json_reply() {
+        let response = reply_with(with_length(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json",
+            r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#,
+        ))
+        .await;
+        assert_eq!(rpc_result(response, 1).await.unwrap(), json!({"ok": true}));
+    }
+
+    #[tokio::test]
+    async fn a_failed_status_is_reported_without_reading_the_body() {
+        let response = reply_with(with_length("HTTP/1.1 502 Bad Gateway", "nope")).await;
+        assert_eq!(
+            rpc_result(response, 1).await.unwrap_err().to_string(),
+            "backend returned 502 Bad Gateway"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_oversized_reply_is_refused() {
+        let body = format!(r#"{{"id":1,"result":"{}"}}"#, "x".repeat(MAX_REPLY));
+        let response = reply_with(with_length(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json",
+            &body,
+        ))
+        .await;
+        assert!(rpc_result(response, 1).await.is_err());
     }
 
     /// Dropping the session wherever the future stopped must still end it at

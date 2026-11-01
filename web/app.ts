@@ -4,27 +4,40 @@ import { action, type FetchDetail } from "./vendor/datastar.js";
 action({
   name: "copy",
   async apply({ el }, text: string) {
-    await navigator.clipboard.writeText(text);
-    const label = el.textContent;
-    el.textContent = "Copied";
+    el.dataset.label ??= el.textContent ?? "";
+    try {
+      await navigator.clipboard.writeText(text);
+      el.textContent = "Copied";
+    } catch {
+      el.textContent = "Copy failed";
+    }
     setTimeout(() => {
-      el.textContent = label;
+      el.textContent = el.dataset.label ?? "";
     }, 1200);
   },
 });
 
-// Datastar drops the body of a non-200 response, so failures are surfaced
-// here: an expired session goes to the login, anything else gets a line at the
-// top of the page.
+// Datastar drops the body of a non-200 response and retries network failures
+// silently, so both are surfaced here: an expired session goes to the login,
+// anything else gets a line at the top of the page until the next request.
 document.addEventListener("datastar-fetch", (event) => {
   const { type, argsRaw } = (event as CustomEvent<FetchDetail>).detail;
-  if (type !== "error") return;
-  if (argsRaw.status === "401") {
+  const flash = document.getElementById("flash");
+  if (type === "started") {
+    if (flash) flash.hidden = true;
+    return;
+  }
+  if (type === "error" && argsRaw.status === "401") {
     location.assign("/login");
     return;
   }
-  const flash = document.getElementById("flash");
   if (!flash) return;
-  flash.textContent = `Something went wrong (${argsRaw.status ?? "network error"}). Try again.`;
+  if (type === "error") {
+    flash.textContent = `Something went wrong (${argsRaw.status}). Try again.`;
+  } else if (type === "retries-failed") {
+    flash.textContent = "The gateway could not be reached. Try again.";
+  } else {
+    return;
+  }
   flash.hidden = false;
 });

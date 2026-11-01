@@ -23,7 +23,7 @@
     {% for f in m.fields %}{% if !f.options_url.is_empty() %}
     <label class="block">
       <span class="muted text-xs">{{ f.label }}</span>
-      <select id="options-{{ m.id }}-{{ f.id }}" data-init="@get('{{ f.options_url }}')"
+      <select id="options-{{ m.id }}-{{ f.id }}" data-url="{{ f.options_url }}" data-init="@get(el.dataset.url)"
               aria-busy="true" aria-label="Loading {{ f.label }}" tabindex="-1"
               class="{% call ui::field_skeleton() %}{% endcall %}">
         <option>&nbsp;</option>

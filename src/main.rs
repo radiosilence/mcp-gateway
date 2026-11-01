@@ -301,6 +301,24 @@ mod tests {
         assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
     }
 
+    /// Plugin names the bundle registers, whichever quote the minifier chose.
+    fn registered_plugins() -> Vec<&'static str> {
+        let names: Vec<&str> = APP_JS
+            .match_indices("name:")
+            .filter_map(|(i, m)| {
+                let rest = &APP_JS[i + m.len()..];
+                let quote = rest
+                    .chars()
+                    .next()
+                    .filter(|c| matches!(c, '"' | '\'' | '`'))?;
+                let rest = &rest[1..];
+                rest.find(quote).map(|end| &rest[..end])
+            })
+            .collect();
+        assert!(!names.is_empty(), "found no plugin names in the bundle");
+        names
+    }
+
     /// The generated assets are committed; a truncated build would still
     /// compile and only show up as a broken page.
     #[test]
@@ -308,7 +326,7 @@ mod tests {
         assert!(APP_CSS.contains("box-sizing:border-box"), "no preflight");
         assert!(APP_CSS.contains("max-w-2xl"), "utilities missing");
         assert!(
-            APP_JS.contains("datastar-fetch") && APP_JS.contains("name:`copy`"),
+            APP_JS.contains("datastar-fetch") && registered_plugins().contains(&"copy"),
             "app.js is not the bundle"
         );
     }
@@ -318,21 +336,14 @@ mod tests {
     /// so an upgrade that renames one fails here.
     #[test]
     fn every_datastar_attribute_is_one_datastar_matches() {
-        // The minifier writes string literals with backticks.
-        let registered: Vec<&str> = APP_JS
-            .match_indices("name:`")
-            .filter_map(|(i, m)| {
-                let rest = &APP_JS[i + m.len()..];
-                rest.find('`').map(|end| &rest[..end])
-            })
-            .collect();
+        let registered = registered_plugins();
         assert!(
             registered.contains(&"init") && registered.contains(&"on"),
             "the bundle registers neither `init` nor `on`; the scan is wrong, not the templates"
         );
 
-        // Read by expressions; Datastar ignores it.
-        const OURS: &[&str] = &["confirm"];
+        // Read by expressions; Datastar ignores them.
+        const OURS: &[&str] = &["confirm", "url"];
 
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         for entry in std::fs::read_dir(&dir).expect("templates/") {

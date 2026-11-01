@@ -13,7 +13,7 @@
 
 {#- Colours arrive as whole class names because Tailwind only sees literals. A
     non-empty `load_url` makes the badge fetch its own replacement. -#}
-{% macro badge(id, colours, dot, label, load_url) %}<span id="{{ id }}"{% if !load_url.is_empty() %} data-init="@get('{{ load_url }}')" aria-busy="true"{% endif %} class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 {{ colours }}"><span class="h-1.5 w-1.5 rounded-full {{ dot }}"></span> {{ label }}</span>{% endmacro %}
+{% macro badge(id, colours, dot, label, load_url) %}<span id="{{ id }}"{% if !load_url.is_empty() %} data-url="{{ load_url }}" data-init="@get(el.dataset.url)" aria-busy="true"{% endif %} class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 {{ colours }}"><span class="h-1.5 w-1.5 rounded-full {{ dot }}"></span> {{ label }}</span>{% endmacro %}
 
 {% macro copy_row(summary, intro, value) %}
 <details class="rounded-lg ring-1 ring-inset ring-slate-200 dark:ring-slate-700 open:bg-slate-50 dark:open:bg-slate-800/50">
@@ -36,7 +36,7 @@
 <form method="post" action="/dashboard/{{ m.id }}/token"
       data-on:submit="@post(el.getAttribute('action'), {contentType: 'form'})"
       class="mt-3 space-y-3">
-  {% if m.has_credential %}<p class="muted text-xs">Leave a password blank to keep the stored one.</p>{% endif %}
+  {% if m.has_stored_secret %}<p class="muted text-xs">Leave a password blank to keep the stored one.</p>{% endif %}
   {% for f in m.fields %}{% if !f.from_backend %}
   <label class="block">
     <span class="muted text-xs">{{ f.label }}{% if !f.required %} <span class="faint">(optional)</span>{% endif %}{% if f.secret && f.is_set %} <span class="text-emerald-600 dark:text-emerald-400">· set</span>{% endif %}</span>

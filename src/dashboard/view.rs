@@ -118,6 +118,8 @@ pub(super) struct McpView {
     pub(super) public: bool,
     /// Whether any field is a backend-sourced setting, shown outside the form.
     pub(super) has_settings: bool,
+    /// Whether a secret is stored, so a blank password box keeps it.
+    pub(super) has_stored_secret: bool,
     pub(super) updated_at: String,
     pub(super) updated_ago: String,
     pub(super) connector_url: String,
@@ -194,6 +196,7 @@ impl McpView {
                 m.id, connector_url
             ),
             has_settings: fields.iter().any(|f| !f.options_url.is_empty()),
+            has_stored_secret: fields.iter().any(|f| f.secret && f.is_set),
             id: m.id.clone(),
             name: m.name.clone(),
             has_credential,
@@ -254,6 +257,7 @@ mod tests {
             has_credential: true,
             public: false,
             has_settings: false,
+            has_stored_secret: false,
             updated_at: String::new(),
             updated_ago: String::new(),
             connector_url: String::new(),
@@ -305,7 +309,7 @@ mod tests {
     /// open.
     #[test]
     fn a_settled_badge_does_not_ask_again() {
-        assert!(badge(pending()).contains("data-init=\"@get('/dashboard/caldav/status')\""));
+        assert!(badge(pending()).contains(r#"data-url="/dashboard/caldav/status""#));
         for verdict in [Verified::Yes, Verified::Rejected, Verified::Unknown] {
             assert!(
                 !badge(pending().checked(verdict)).contains("data-init"),
@@ -419,6 +423,7 @@ mod preview {
             has_credential: true,
             public: false,
             has_settings: false,
+            has_stored_secret: false,
             updated_at: "2026-08-20T10:00:00Z".into(),
             updated_ago: "3 days ago".into(),
             connector_url: format!("https://mcp.blit.cc/{id}"),

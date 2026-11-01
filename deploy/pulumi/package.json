@@ -39,11 +39,11 @@
     "yaml": "^2"
   },
   "devDependencies": {
-    "@pulumi/kubernetes": "4.30.0",
-    "@pulumi/pulumi": "3.239.0",
-    "@pulumi/random": "4.20.0",
+    "@pulumi/kubernetes": "4.34.2",
+    "@pulumi/pulumi": "3.273.0",
+    "@pulumi/random": "4.21.4",
     "typescript": "6.0.3",
     "vitest": "^4",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   }
 }

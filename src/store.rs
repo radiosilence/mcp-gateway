@@ -8,12 +8,13 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use base64::Engine;
+use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 
 use crate::config::Mcp;
-use crate::crypto::Cipher;
+use crate::crypto::{Cipher, row_binding};
 
 /// A resolved dashboard session.
 pub struct Session {
@@ -25,6 +26,10 @@ pub struct Session {
 pub struct OAuthFlow {
     pub csrf: String,
     pub verifier: String,
+}
+
+fn session_key(id: &str) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(id.as_bytes()))
 }
 
 fn new_id() -> String {
@@ -137,7 +142,7 @@ impl Store {
         match row {
             Some(row) => {
                 let sealed: String = row.get("enc_secret");
-                let plain = self.cipher.open(&sealed)?;
+                let plain = self.unseal(sub, mcp_id, &sealed).await?;
                 let meta = TokenMeta {
                     updated_at: row.get("updated_at"),
                 };
@@ -165,7 +170,9 @@ impl Store {
             let Some(mcp) = mcps.iter().find(|m| m.id == mcp_id) else {
                 continue;
             };
-            let plain = self.cipher.open(&row.get::<String, _>("enc_secret"))?;
+            let plain = self
+                .unseal(sub, &mcp_id, &row.get::<String, _>("enc_secret"))
+                .await?;
             let meta = TokenMeta {
                 updated_at: row.get("updated_at"),
             };
@@ -199,8 +206,8 @@ impl Store {
         .map(|row| {
             let sealed: String = row.get("enc_secret");
             self.cipher
-                .open(&sealed)
-                .map(|plain| decode_secret(&plain, primary_field))
+                .open(&sealed, &row_binding(sub, mcp_id))
+                .map(|opened| decode_secret(&opened.plain, primary_field))
         })
         .transpose()?;
 
@@ -211,7 +218,9 @@ impl Store {
                 return Ok(Err(e));
             }
         };
-        let sealed = self.cipher.seal(&encode_secret(&values))?;
+        let sealed = self
+            .cipher
+            .seal(&encode_secret(&values), &row_binding(sub, mcp_id))?;
         sqlx::query(
             "INSERT INTO credentials (sub, mcp_id, enc_secret, updated_at)
              VALUES ($1, $2, $3, now())
@@ -235,13 +244,83 @@ impl Store {
         Ok(())
     }
 
-    // ---- Dashboard sessions (opaque id → server-side state) ----
+    /// Open a stored credential, resealing it bound to its row if it predates
+    /// binding. Older replicas keep writing unbound blobs during a rollout, so
+    /// this is not left to startup alone.
+    async fn unseal(&self, sub: &str, mcp_id: &str, sealed: &str) -> Result<String> {
+        let binding = row_binding(sub, mcp_id);
+        let opened = self.cipher.open(sealed, &binding)?;
+        if opened.legacy
+            && let Err(e) = self.reseal(sub, mcp_id, sealed, &opened.plain).await
+        {
+            tracing::warn!(error = format!("{e:#}"), mcp = %mcp_id, "resealing a credential failed");
+        }
+        Ok(opened.plain)
+    }
+
+    /// Replace `old` with `plain` sealed to its row, only if the row still
+    /// holds `old`: a save that landed in between wins.
+    async fn reseal(&self, sub: &str, mcp_id: &str, old: &str, plain: &str) -> Result<bool> {
+        let sealed = self.cipher.seal(plain, &row_binding(sub, mcp_id))?;
+        let done = sqlx::query(
+            "UPDATE credentials SET enc_secret = $4 WHERE sub = $1 AND mcp_id = $2 AND enc_secret = $3",
+        )
+        .bind(sub)
+        .bind(mcp_id)
+        .bind(old)
+        .bind(sealed)
+        .execute(&self.pool)
+        .await?;
+        Ok(done.rows_affected() == 1)
+    }
+
+    /// Reseal every credential stored before row binding, at startup and
+    /// hourly. Neither a row that will not open nor a failed update stops the
+    /// gateway.
+    pub async fn reseal_legacy(&self) -> Result<()> {
+        let rows = sqlx::query(
+            "SELECT sub, mcp_id, enc_secret FROM credentials WHERE enc_secret NOT LIKE 'v2.%'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let (mut resealed, mut unreadable) = (0, 0);
+        for row in rows {
+            let (sub, mcp_id, sealed): (String, String, String) =
+                (row.get("sub"), row.get("mcp_id"), row.get("enc_secret"));
+            let Ok(opened) = self.cipher.open(&sealed, &row_binding(&sub, &mcp_id)) else {
+                unreadable += 1;
+                continue;
+            };
+            match self.reseal(&sub, &mcp_id, &sealed, &opened.plain).await {
+                Ok(true) => resealed += 1,
+                Ok(false) => {}
+                Err(e) => tracing::warn!(
+                    error = format!("{e:#}"),
+                    mcp = %mcp_id,
+                    "resealing a credential failed"
+                ),
+            }
+        }
+        if resealed > 0 {
+            tracing::info!(resealed, "bound legacy credentials to their rows");
+        }
+        if unreadable > 0 {
+            tracing::warn!(
+                unreadable,
+                "stored credentials that will not open with this key"
+            );
+        }
+        Ok(())
+    }
+
+    // ---- Dashboard sessions. The cookie carries the id; the table holds only
+    // its hash, so reading the table does not yield usable sessions. ----
 
     pub async fn create_session(&self, sub: &str, login: &str, ttl_secs: i64) -> Result<String> {
         let id = new_id();
         let expires_at = OffsetDateTime::now_utc() + time::Duration::seconds(ttl_secs);
         sqlx::query("INSERT INTO sessions (id, sub, login, expires_at) VALUES ($1, $2, $3, $4)")
-            .bind(&id)
+            .bind(session_key(&id))
             .bind(sub)
             .bind(login)
             .bind(expires_at)
@@ -253,7 +332,7 @@ impl Store {
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>> {
         let row =
             sqlx::query("SELECT sub, login FROM sessions WHERE id = $1 AND expires_at > now()")
-                .bind(id)
+                .bind(session_key(id))
                 .fetch_optional(&self.pool)
                 .await?;
         Ok(row.map(|row| Session {
@@ -264,7 +343,7 @@ impl Store {
 
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         sqlx::query("DELETE FROM sessions WHERE id = $1")
-            .bind(id)
+            .bind(session_key(id))
             .execute(&self.pool)
             .await?;
         Ok(())

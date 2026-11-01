@@ -1,11 +1,12 @@
-//! Cookies carry only opaque ids — the corresponding state lives server-side
-//! (see [`crate::store`]). No signed/JWT cookies, nothing forgeable or
-//! claim-bearing on the client. Any pod resolves any cookie via the DB.
-//! - `fmmcp_session`: dashboard login → `sessions` row.
-//! - `fmmcp_oauth`: transient CSRF/login flow → `oauth_flows` row.
+//! Cookies carry only opaque ids; the state they name lives in the database.
+//!
+//! `__Host-` makes the browser refuse them unless they are `Secure`, scoped to
+//! `/` and carry no `Domain`, so a sibling subdomain cannot set or shadow them.
 
-pub const SESSION_COOKIE: &str = "fmmcp_session";
-pub const OAUTH_COOKIE: &str = "fmmcp_oauth";
+pub const SESSION_COOKIE: &str = "__Host-session";
+pub const OAUTH_COOKIE: &str = "__Host-oauth";
+/// Names used before the `__Host-` prefix, cleared wherever a session changes.
+pub const LEGACY_COOKIES: [&str; 2] = ["fmmcp_session", "fmmcp_oauth"];
 
 /// Build a hardened `Set-Cookie` value.
 pub fn set_cookie(name: &str, value: &str, max_age_secs: i64) -> String {

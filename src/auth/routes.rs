@@ -44,6 +44,15 @@ pub async fn current_session(state: &AppState, headers: &HeaderMap) -> AppResult
     }
 }
 
+/// `cookies`, plus clearing the pre-`__Host-` names.
+fn clearing(cookies: &[String]) -> Vec<String> {
+    cookies
+        .iter()
+        .cloned()
+        .chain(cookie::LEGACY_COOKIES.map(cookie::clear_cookie))
+        .collect()
+}
+
 fn redirect(location: &str, cookies: &[String]) -> Response {
     let mut resp = Response::builder()
         .status(StatusCode::FOUND)
@@ -82,7 +91,7 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
         );
     }
     // Only this gateway's session; the issuer's serves other relying parties.
-    redirect("/", &[cookie::clear_cookie(SESSION_COOKIE)])
+    redirect("/", &clearing(&[cookie::clear_cookie(SESSION_COOKIE)]))
 }
 
 #[derive(Deserialize)]
@@ -124,9 +133,9 @@ pub async fn callback(
 
     Ok(redirect(
         "/dashboard",
-        &[
+        &clearing(&[
             cookie::clear_cookie(OAUTH_COOKIE),
             cookie::set_cookie(SESSION_COOKIE, &session_id, SESSION_TTL),
-        ],
+        ]),
     ))
 }

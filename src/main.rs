@@ -112,6 +112,7 @@ async fn main() -> Result<()> {
     let cipher = Cipher::new(&std::mem::take(&mut config.token_enc_key))?;
     let store = Store::connect(&config.database_url, cipher).await?;
     store.migrate().await?;
+    store.reseal_legacy().await?;
     tracing::info!("database connected & migrated");
 
     // Redirects are not followed: the dashboard's backend calls carry injected
@@ -163,13 +164,17 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Every replica sweeping is harmless: the delete is idempotent.
+    // Every replica sweeping is harmless: both steps are idempotent.
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3_600));
         loop {
             interval.tick().await;
             if let Err(e) = store.delete_expired().await {
                 tracing::warn!(error = %e, "sweeping expired sessions failed");
+            }
+            // Binds credentials older replicas wrote during a rollout.
+            if let Err(e) = store.reseal_legacy().await {
+                tracing::warn!(error = %e, "resealing legacy credentials failed");
             }
         }
     });

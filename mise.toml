@@ -1,5 +1,5 @@
 [tools]
-rust = { version = "1", components = "rustfmt,clippy" }
+rust = { version = "latest", components = "rustfmt,clippy" }
 just = "latest"
 actionlint = "1.7.12"
 shellcheck = "0.11.0"
@@ -8,8 +8,10 @@ lefthook = "latest"
 # "aqua:cloudflare/cloudflared".)
 cloudflared = "latest"
 jq = "latest"
-# The standalone CLI, so building the stylesheet needs no node toolchain.
-"github:tailwindlabs/tailwindcss" = "3.4.17"
+# Exact, because the committed assets are checked against a rebuild in CI and
+# aube versions differ in how they write the lockfile.
+node = "24"
+aube = "2.8.5"
 
 [env]
 # Dev hostnames (radiosilence.dev = dev; blit.cc = prod). Must be on a domain
@@ -18,10 +20,15 @@ jq = "latest"
 GATEWAY_HOST = "mcp.radiosilence.dev"
 AUTH_HOST = "auth.radiosilence.dev"
 TUNNEL_NAME = "mcp-gateway-dev"
+_.path = ["node_modules/.bin"]
 
-[tasks.css]
-description = "Rebuild the stylesheet after changing a template"
-run = "tailwindcss -c tailwind.config.js -i assets/tailwind.css -o assets/app.css --minify"
+[tasks.web]
+description = "Rebuild assets/app.js and assets/app.css after changing web/ or a template"
+run = "aube install --frozen-lockfile && rolldown -c && tailwindcss -i web/app.css -o assets/app.css --minify"
+
+[tasks.web-check]
+description = "Typecheck, lint and format-check web/"
+run = "aube install --frozen-lockfile && tsc && oxlint --ignore-pattern 'web/vendor/datastar.js' web && oxfmt --check web/app.ts web/vendor/datastar.d.ts rolldown.config.ts"
 
 [tasks.up]
 description = "Run the stack locally on http://localhost:8080"

@@ -97,10 +97,11 @@ You can exercise the whole browser flow (login, set token, test connection) at
 `http://localhost:8080` directly — no HTTPS needed for a local browser.
 
 The page loads nothing from the internet: the stylesheet and script are embedded
-in the binary. The stylesheet is generated from the templates and committed, so
-**after changing a template or `assets/app.js`, run `mise run css`** and commit
-the result — CI rebuilds it and fails if it differs. Tailwind comes from mise,
-so there is no node toolchain to install.
+in the binary. Both are built from `web/` (TypeScript bundled with the vendored
+Datastar by rolldown, and Tailwind v4 reading class names from the templates) and
+committed, so a cargo build needs no node toolchain. **After changing `web/` or a
+template, run `mise run web`** and commit the result; CI rebuilds both and fails
+if they differ. `mise run web-check` typechecks, lints and format-checks.
 
 ### Testing the Claude connector (Cloudflare tunnel)
 

@@ -1,0 +1,1 @@
+- **The Pulumi component builds against current Pulumi and zod.** Dev pins move to `@pulumi/kubernetes` 4.34.2, `@pulumi/pulumi` 3.273.0, `@pulumi/random` 4.21.4 and zod 4.6.7; the peer ranges are unchanged, so consumers are unaffected. TypeScript stays on 6, since `@pulumi/pulumi` declares support below 7.

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.11.1
+
+### Security
+
+- **Dashboard requests to backends no longer follow redirects.** The client that verifies credentials and loads setting choices followed up to ten redirects, and reqwest strips only `Authorization`, `Cookie` and `Proxy-Authorization` when a redirect changes host, so a credential injected as any other header could be sent to whatever host a backend redirected to. The proxy already refused redirects; this client now does too.
+- **Dashboard requests require Datastar's request header, and sign-out is a POST.** `SameSite=Lax` lets sibling subdomains submit forms with the session cookie; a cross-site form cannot set `Datastar-Request`, so requests without it are refused. Sign-out no longer happens on a GET that any page could trigger.
+- **Everyone signs in to the dashboard again once, and stored secrets are bound to their rows.** Session ids are now stored as their SHA-256, so read access to the database no longer yields live sessions; existing sessions are dropped by migration. The cookies move to `__Host-session` and `__Host-oauth`, which a sibling subdomain cannot set or shadow, and the old names are cleared. Each sealed credential is now bound to its user and MCP, so one copied into another user's row no longer opens; credentials stored before this are resealed at startup, hourly and whenever they are read. Rolling back to an earlier version after this one has started leaves stored credentials unreadable, so roll forward instead.
+
+### Changed
+
+- **The dashboard login no longer asks for `offline_access`.** The gateway discarded the refresh token, so Hydra was minting and storing one per sign-in for nothing.
+- **Registry ids are restricted to letters, digits, `-` and `_`, and must be unique.** MCP and field ids are written into URLs, element ids and Datastar expressions, where other characters need escaping that nothing applied. A duplicated MCP id used to leave the second entry unreachable; it now fails at startup, as does an id outside the new character set. A field may no longer be injected as a header the proxy manages itself (`Host`, `Content-Length`, hop-by-hop headers, `Cookie`, `Mcp-Session-Id`, `Mcp-Protocol-Version`), and two fields of one MCP may not share a header.
+- **The dashboard's script is TypeScript bundled with Datastar 1.0.4, styled with Tailwind v4.** One embedded `app.js` replaces the separate Datastar and app scripts. Fragments come back as plain HTML rather than single-event SSE streams. Copy buttons are a Datastar action, and no template writes a value into a script expression. A failed dashboard request is no longer silent: an expired session goes to the login, and anything else shows a line at the top of the page.
+
+### Fixed
+
+- **Backend MCP replies are read by id and the stream is not waited out.** The dashboard took the first SSE event as the reply, so a backend that sent a notification first broke credential checks and setting choices, and it read the stream to the end, so one held open stalled the request until its 15-second timeout. It now reads until the reply to its own request arrives, negotiates protocol version 2025-06-18, and sends `MCP-Protocol-Version` on later requests.
+- **Outages answer 503 instead of looking like bad credentials.** When Hydra could not answer an introspection the proxy returned the OAuth challenge, sending clients through sign-in again for an outage a new token could not fix; when the credential store failed it forwarded the request without credentials. Both now answer 503 with `Retry-After`. A database error on the dashboard no longer reads as being signed out, and the pool gives up after five seconds rather than thirty.
+- **The dashboard says why a setting was not saved.** Datastar ignores the body of a non-200 response, so refusals such as saving a setting before connecting showed nothing; they now come back as the setting's status line. A template that fails to render answers 500 rather than an empty patch.
+
+### Internal
+
+- **`web/` is built with aube, rolldown and the Tailwind v4 CLI, and checked with tsc, oxlint and oxfmt.** `mise run web` rebuilds the committed assets and `mise run web-check` checks the sources; CI runs both for any change under `web/`, the templates or the toolchain files.
+- **The Pulumi component builds against current Pulumi and zod.** Dev pins move to `@pulumi/kubernetes` 4.34.2, `@pulumi/pulumi` 3.273.0, `@pulumi/random` 4.21.4 and zod 4.6.7; the peer ranges are unchanged, so consumers are unaffected. TypeScript stays on 6, since `@pulumi/pulumi` declares support below 7.
+- **Builds use the latest stable Rust.** mise installs `rust` at `latest`.
+
 ## 0.11.0
 
 ### Security

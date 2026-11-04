@@ -265,6 +265,11 @@ export function createMcpGateway(
                   { name: "PGDATA", value: "/var/lib/postgresql/data/pgdata" },
                 ],
                 ports: [{ containerPort: 5432 }],
+                // The image's postgres user. Started as root, the entrypoint
+                // drops privileges through gosu, whose setuid never returns on
+                // Ubuntu's 7.0.0-42 kernel; started as this user it runs
+                // postgres directly. The data directory is already its own.
+                securityContext: { runAsUser: 999, runAsGroup: 999 },
                 volumeMounts: [
                   { name: "data", mountPath: "/var/lib/postgresql/data" },
                   { name: "initdb", mountPath: "/docker-entrypoint-initdb.d" },

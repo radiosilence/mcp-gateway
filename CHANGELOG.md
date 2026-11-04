@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.2
+
+### Fixed
+
+- **Postgres starts as its own user.** The image dropped root through `gosu`, whose setuid never returns on Ubuntu's 7.0.0-42 kernel, so postgres, and Hydra and the gateway behind it, never came up on nodes running it.
+
 ## 0.11.1
 
 ### Security

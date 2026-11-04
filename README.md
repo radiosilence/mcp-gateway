@@ -205,6 +205,11 @@ to rotate a working credential is worse than saying nothing.
 Omit `verify` entirely and the gateway makes no claim, which is the right answer
 for a backend that authenticates nothing.
 
+A public MCP may declare `verify` too, for a backend that holds its own account
+rather than the user's: the check runs with no credentials, and its answer is
+whether that account works, so the badge says "Backend signed out" rather than
+showing a backend that cannot serve anything as connected.
+
 #### MCPs that need more than one value
 
 `credential_header: X-Some-Token` stays available as shorthand for a backend

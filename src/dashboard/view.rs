@@ -188,7 +188,7 @@ impl McpView {
             })
             .collect();
 
-        let needs_check = has_credential && !m.public && m.verify.is_some();
+        let needs_check = has_credential && m.verify.is_some();
         let connector_url = format!("{}/{}", config.public_url.trim_end_matches('/'), m.id);
         McpView {
             claude_code_cmd: format!(
@@ -220,6 +220,24 @@ impl McpView {
     /// The badge's element id, which the status patch targets.
     pub(super) fn status_id(&self) -> String {
         format!("status-{}", self.id)
+    }
+
+    /// A public MCP's check is of the backend's own account, so a refusal
+    /// is not about anything the user entered.
+    pub(super) fn rejected_label(&self) -> &'static str {
+        match self.public {
+            true => "Backend signed out",
+            false => "Credentials rejected",
+        }
+    }
+
+    /// The backend could not say: stored credentials are "Configured", while a
+    /// public MCP has nothing stored to describe.
+    pub(super) fn unknown_label(&self) -> &'static str {
+        match self.public {
+            true => "Status unknown",
+            false => "Configured",
+        }
     }
 
     /// Settle the badge with what a backend said. Clearing `status_url` stops
@@ -334,6 +352,20 @@ mod tests {
         // Asked, and the backend could not say. Not green: that would be a
         // claim we have no grounds for.
         assert!(badge(pending().checked(Verified::Unknown)).contains("Configured"));
+    }
+
+    /// A public MCP with a check reports what its backend says rather than
+    /// passing as connected, and a refusal names the backend, not the user.
+    #[test]
+    fn a_public_check_reads_as_the_backend() {
+        let public = || McpView {
+            public: true,
+            ..pending()
+        };
+        assert!(badge(public().checked(Verified::Yes)).contains("Connected"));
+        assert!(badge(public().checked(Verified::Rejected)).contains("Backend signed out"));
+        let unknown = badge(public().checked(Verified::Unknown));
+        assert!(unknown.contains("Status unknown") && !unknown.contains("Connected"));
     }
 
     /// A check in flight must not read as "Not configured".

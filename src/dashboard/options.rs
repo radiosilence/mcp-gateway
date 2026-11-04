@@ -20,13 +20,21 @@ pub(super) enum Verified {
     Unknown,
 }
 
-/// Ask a backend whether it accepts the stored credentials.
+/// Ask a backend whether it accepts the stored credentials. A public MCP has
+/// none, so it is asked with none: the answer is then whether the backend's
+/// own account works.
 pub(super) async fn verify(
     state: &AppState,
     mcp: &Mcp,
     credentials: Option<&CredentialSet>,
 ) -> Verified {
-    let (Some(check), Some(credentials)) = (&mcp.verify, credentials) else {
+    let none = CredentialSet::new();
+    let credentials = match (credentials, mcp.public) {
+        (Some(credentials), _) => credentials,
+        (None, true) => &none,
+        (None, false) => return Verified::Unknown,
+    };
+    let Some(check) = &mcp.verify else {
         return Verified::Unknown;
     };
     match crate::backend::graphql(state, mcp, credentials, &check.query, None).await {

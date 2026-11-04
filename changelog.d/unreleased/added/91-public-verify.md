@@ -1,0 +1,1 @@
+- **A public MCP can declare `verify`.** The check runs with no credentials, so a backend holding its own account shows whether that account works, rather than always reading as connected.

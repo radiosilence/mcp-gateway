@@ -28,11 +28,12 @@ export const McpCredentialFieldSchema = z.object({
  *
  * `credentialHeader` is the shorthand for the common one-token case;
  * `fields` covers backends wanting several values (CalDAV needs a username, an
- * app password, and a server URL); `public` covers a backend fronting something
- * public, which needs neither. Exactly one of the three, matching what the
+ * app password, and a server URL); `noAuth` covers a backend that takes no
+ * credentials from the user, either because it fronts something public or
+ * because it holds its own account. Exactly one of the three, matching what the
  * gateway's registry accepts.
  *
- * `public` is opt-in rather than inferred from an absent credential block: a
+ * `noAuth` is opt-in rather than inferred from an absent credential block: a
  * backend declaring no credentials is far more often a typo than a decision,
  * and the deploy should fail rather than quietly front an unauthenticated MCP.
  */
@@ -55,7 +56,7 @@ export const McpSchema = z
     credentialHeader: z.string().optional(),
     fields: z.array(McpCredentialFieldSchema).optional(),
     /** Takes no credentials at all — see the note above. */
-    public: z.boolean().optional(),
+    noAuth: z.boolean().optional(),
     /**
      * Path to a plain GraphQL endpoint the backend serves beside its MCP one,
      * for the dashboard's own lookups. In-cluster only — never proxied.
@@ -86,9 +87,9 @@ export const McpSchema = z
   })
   .refine(
     (b) =>
-      [!!b.credentialHeader, !!b.fields?.length, !!b.public].filter(Boolean)
+      [!!b.credentialHeader, !!b.fields?.length, !!b.noAuth].filter(Boolean)
         .length === 1,
-    { message: "set exactly one of credentialHeader, fields, or public" },
+    { message: "set exactly one of credentialHeader, fields, or noAuth" },
   )
   .refine((b) => !!b.image !== !!b.url, {
     message: "set exactly one of image (deployed here) or url (deployed elsewhere)",

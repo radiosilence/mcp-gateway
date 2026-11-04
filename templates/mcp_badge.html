@@ -10,6 +10,6 @@
 {%- else if m.verified %}
 {% call ui::badge(m.status_id(), "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 ring-emerald-200 dark:ring-emerald-900", "bg-emerald-500", "Connected", "") %}{% endcall %}
 {%- else %}
-{#- Stored, or public, but the backend could not say whether it works. -#}
+{#- Stored, or no_auth, but the backend could not say whether it works. -#}
 {% call ui::badge(m.status_id(), "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 ring-slate-200 dark:ring-slate-700", "bg-slate-400", m.unknown_label(), "") %}{% endcall %}
 {%- endif %}

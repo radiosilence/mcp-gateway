@@ -22,7 +22,7 @@ describe("McpSchema credentials", () => {
 
   it("accepts the single-header shorthand", () => {
     const b = McpSchema.parse({ ...base, credentialHeader: "X-Token" });
-    expect(b.public).toBeUndefined();
+    expect(b.noAuth).toBeUndefined();
   });
 
   it("accepts a multi-field backend", () => {
@@ -33,9 +33,9 @@ describe("McpSchema credentials", () => {
     expect(b.fields).toHaveLength(1);
   });
 
-  it("accepts a public backend with no credentials", () => {
-    const b = McpSchema.parse({ ...base, public: true });
-    expect(b.public).toBe(true);
+  it("accepts a noAuth backend with no credentials", () => {
+    const b = McpSchema.parse({ ...base, noAuth: true });
+    expect(b.noAuth).toBe(true);
     expect(b.credentialHeader).toBeUndefined();
     expect(b.fields).toBeUndefined();
   });
@@ -45,20 +45,20 @@ describe("McpSchema credentials", () => {
     expect(() => McpSchema.parse(base)).toThrow();
   });
 
-  it("rejects public alongside a credential", () => {
+  it("rejects noAuth alongside a credential", () => {
     // One of the two is a mistake, and guessing which would either drop a
     // credential or put a connect form on a backend that has nothing to store.
     expect(() =>
       McpSchema.parse({
         ...base,
-        public: true,
+        noAuth: true,
         credentialHeader: "X-Token",
       }),
     ).toThrow();
     expect(() =>
       McpSchema.parse({
         ...base,
-        public: true,
+        noAuth: true,
         fields: [{ id: "user", label: "User", header: "X-User" }],
       }),
     ).toThrow();
@@ -74,9 +74,9 @@ describe("McpSchema credentials", () => {
     ).toThrow();
   });
 
-  it("treats public: false as no declaration at all", () => {
-    // Otherwise `public: false` would satisfy the rule while declaring nothing.
-    expect(() => McpSchema.parse({ ...base, public: false })).toThrow();
+  it("treats noAuth: false as no declaration at all", () => {
+    // Otherwise `noAuth: false` would satisfy the rule while declaring nothing.
+    expect(() => McpSchema.parse({ ...base, noAuth: false })).toThrow();
   });
 });
 

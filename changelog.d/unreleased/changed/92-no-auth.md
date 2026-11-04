@@ -1,0 +1,1 @@
+- **`public` is now `no_auth` in the registry (`noAuth` in the Pulumi schema).** It means the backend takes no credentials from the user, which reads wrongly as "open to anyone" when the gateway login still applies. Registries using `public` fail to load until renamed.

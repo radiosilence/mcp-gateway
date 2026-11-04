@@ -10,7 +10,7 @@
 
   {% if m.has_credential %}
   <p class="muted mt-1.5 text-xs">
-    {% if m.public %}No credentials needed.{% else %}Credentials set · updated <time datetime="{{ m.updated_at }}" title="{{ m.updated_at }}">{{ m.updated_ago }}</time>.{% endif %}
+    {% if m.no_auth %}No credentials needed.{% else %}Credentials set · updated <time datetime="{{ m.updated_at }}" title="{{ m.updated_at }}">{{ m.updated_ago }}</time>.{% endif %}
     Add it to Claude:
   </p>
   <div class="mt-4 space-y-2">
@@ -34,7 +34,7 @@
   </div>
   {% endif %}
 
-  {% if m.public %}
+  {% if m.no_auth %}
   <p class="muted mt-6 text-xs">No credentials to enter, nothing stored.</p>
   {% else %}
   <details class="mt-6 text-xs">

@@ -28,17 +28,17 @@ token), **Calendar** (CalDAV — iCloud by default, username + app password +
 server URL), and **Folk** (the Mainly Norfolk English folk archive — no
 credentials at all).
 
-Folk is the first *public* MCP: it reads a public website, so there is nothing
-to authenticate to and nothing to store. It appears on the dashboard already
-connected, with a connector URL and no form. Public is opt-in via
-`"public": true` in the registry rather than inferred from an absent
+Folk is the first MCP that takes no credentials: it reads a public website, so
+there is nothing to authenticate to and nothing to store. It appears on the
+dashboard already connected, with a connector URL and no form. This is opt-in
+via `"no_auth": true` in the registry rather than inferred from an absent
 `credential_header` — an MCP that declares no credentials is far more often a
 typo than a decision, and the gateway should not quietly front an unauthenticated
 backend because someone missed a line of JSON.
 
 The OAuth login still applies: it establishes who the user is before the
-gateway proxies anything. Public means *this backend needs no key of its own*,
-not that the route is open.
+gateway proxies anything. `no_auth` means *this backend takes no credentials
+from the user*, not that the route is open.
 
 ## Architecture
 
@@ -204,6 +204,11 @@ to rotate a working credential is worse than saying nothing.
 
 Omit `verify` entirely and the gateway makes no claim, which is the right answer
 for a backend that authenticates nothing.
+
+A `no_auth` MCP may declare `verify` too, for a backend that holds its own account
+rather than the user's: the check runs with no credentials, and its answer is
+whether that account works, so the badge says "Backend signed out" rather than
+showing a backend that cannot serve anything as connected.
 
 A public MCP may declare `verify` too, for a backend that holds its own account
 rather than the user's: the check runs with no credentials, and its answer is

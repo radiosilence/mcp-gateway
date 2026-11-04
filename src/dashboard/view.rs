@@ -115,7 +115,7 @@ pub(super) struct McpView {
     pub(super) name: String,
     pub(super) has_credential: bool,
     /// Takes no credentials: connected on login, nothing to disconnect.
-    pub(super) public: bool,
+    pub(super) no_auth: bool,
     /// Whether any field is a backend-sourced setting, shown outside the form.
     pub(super) has_settings: bool,
     /// Whether a secret is stored, so a blank password box keeps it.
@@ -148,9 +148,9 @@ impl McpView {
         stored: Option<(CredentialSet, TokenMeta)>,
     ) -> Self {
         let (stored, meta) = stored.unzip();
-        let has_credential = m.public || meta.is_some();
+        let has_credential = m.no_auth || meta.is_some();
         let (updated_at, updated_ago) = meta
-            .filter(|_| !m.public)
+            .filter(|_| !m.no_auth)
             .map(|meta| (meta.updated_at_rfc3339(), meta.updated_ago()))
             .unwrap_or_default();
 
@@ -207,7 +207,7 @@ impl McpView {
                 true => format!("/dashboard/{}/status", m.id),
                 false => String::new(),
             },
-            public: m.public,
+            no_auth: m.no_auth,
             updated_at,
             updated_ago,
             connector_url,
@@ -222,19 +222,19 @@ impl McpView {
         format!("status-{}", self.id)
     }
 
-    /// A public MCP's check is of the backend's own account, so a refusal
+    /// A `no_auth` MCP's check is of the backend's own account, so a refusal
     /// is not about anything the user entered.
     pub(super) fn rejected_label(&self) -> &'static str {
-        match self.public {
+        match self.no_auth {
             true => "Backend signed out",
             false => "Credentials rejected",
         }
     }
 
     /// The backend could not say: stored credentials are "Configured", while a
-    /// public MCP has nothing stored to describe.
+    /// `no_auth` MCP has nothing stored to describe.
     pub(super) fn unknown_label(&self) -> &'static str {
-        match self.public {
+        match self.no_auth {
             true => "Status unknown",
             false => "Configured",
         }
@@ -273,7 +273,7 @@ mod tests {
             id: "caldav".into(),
             name: "CalDAV".into(),
             has_credential: true,
-            public: false,
+            no_auth: false,
             has_settings: false,
             has_stored_secret: false,
             updated_at: String::new(),
@@ -354,17 +354,17 @@ mod tests {
         assert!(badge(pending().checked(Verified::Unknown)).contains("Configured"));
     }
 
-    /// A public MCP with a check reports what its backend says rather than
+    /// A `no_auth` MCP with a check reports what its backend says rather than
     /// passing as connected, and a refusal names the backend, not the user.
     #[test]
-    fn a_public_check_reads_as_the_backend() {
-        let public = || McpView {
-            public: true,
+    fn a_no_auth_check_reads_as_the_backend() {
+        let no_auth = || McpView {
+            no_auth: true,
             ..pending()
         };
-        assert!(badge(public().checked(Verified::Yes)).contains("Connected"));
-        assert!(badge(public().checked(Verified::Rejected)).contains("Backend signed out"));
-        let unknown = badge(public().checked(Verified::Unknown));
+        assert!(badge(no_auth().checked(Verified::Yes)).contains("Connected"));
+        assert!(badge(no_auth().checked(Verified::Rejected)).contains("Backend signed out"));
+        let unknown = badge(no_auth().checked(Verified::Unknown));
         assert!(unknown.contains("Status unknown") && !unknown.contains("Connected"));
     }
 
@@ -453,7 +453,7 @@ mod preview {
             id: id.into(),
             name: name.into(),
             has_credential: true,
-            public: false,
+            no_auth: false,
             has_settings: false,
             has_stored_secret: false,
             updated_at: "2026-08-20T10:00:00Z".into(),
@@ -516,7 +516,7 @@ mod preview {
                 ..mcp("CalDAV", "caldav")
             },
             McpView {
-                public: true,
+                no_auth: true,
                 verified: true,
                 updated_at: String::new(),
                 updated_ago: String::new(),

@@ -61,13 +61,13 @@ pub struct Mcp {
     /// Shorthand for a single secret, expanded into `fields` at load.
     #[serde(default)]
     credential_header: Option<String>,
-    /// The values this MCP needs; non-empty after loading unless `public`.
+    /// The values this MCP needs; non-empty after loading unless `no_auth`.
     #[serde(default)]
     pub fields: Vec<CredentialField>,
     /// Takes no credentials. Explicit rather than inferred from empty `fields`,
     /// which is more often a mistake than a decision.
     #[serde(default)]
-    pub public: bool,
+    pub no_auth: bool,
     /// Plain GraphQL-over-HTTP endpoint for the dashboard's own queries, which
     /// otherwise go through the `graphql` MCP tool. Never proxied.
     #[serde(default)]
@@ -247,10 +247,10 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
         m.id
     );
 
-    if m.public {
+    if m.no_auth {
         anyhow::ensure!(
             m.credential_header.is_none() && m.fields.is_empty(),
-            "MCP {:?} is marked public but declares credentials — use one or the other",
+            "MCP {:?} is marked no_auth but declares credentials — use one or the other",
             m.id
         );
         return Ok(m);
@@ -260,7 +260,7 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
         let header = m.credential_header.as_deref().with_context(|| {
             format!(
                 "MCP {:?} defines neither `credential_header` nor `fields` \
-                 (add \"public\": true if it genuinely needs none)",
+                 (add \"no_auth\": true if it genuinely needs none)",
                 m.id
             )
         })?;
@@ -378,22 +378,25 @@ mod tests {
     }
 
     #[test]
-    fn a_public_mcp_needs_no_credentials() {
+    fn a_no_auth_mcp_needs_no_credentials() {
         let mcps =
-            parse(r#"[{"id":"folk","name":"Folk","backend":"http://folk/mcp","public":true}]"#)
+            parse(r#"[{"id":"folk","name":"Folk","backend":"http://folk/mcp","no_auth":true}]"#)
                 .unwrap();
-        assert!(mcps[0].public);
-        assert!(mcps[0].fields.is_empty(), "a public MCP declares no fields");
+        assert!(mcps[0].no_auth);
+        assert!(
+            mcps[0].fields.is_empty(),
+            "a no_auth MCP declares no fields"
+        );
     }
 
     #[test]
-    fn a_public_mcp_may_not_also_declare_credentials() {
+    fn a_no_auth_mcp_may_not_also_declare_credentials() {
         // Both forms together means one of them is a mistake, and guessing
         // which would either leak a form onto a credential-less MCP or drop a
         // credential silently.
         assert!(
             parse(
-                r#"[{"id":"x","name":"X","backend":"http://x/mcp","public":true,
+                r#"[{"id":"x","name":"X","backend":"http://x/mcp","no_auth":true,
                      "credential_header":"X-Token"}]"#
             )
             .is_err()
@@ -401,14 +404,14 @@ mod tests {
     }
 
     #[test]
-    fn an_mcp_is_not_public_by_default() {
+    fn an_mcp_is_not_no_auth_by_default() {
         // The absence of credentials stays an error: it is far more often a
         // typo than a decision.
         let mcps = parse(
             r#"[{"id":"x","name":"X","backend":"http://x/mcp","credential_header":"X-Token"}]"#,
         )
         .unwrap();
-        assert!(!mcps[0].public);
+        assert!(!mcps[0].no_auth);
     }
 
     #[test]
@@ -430,8 +433,8 @@ mod tests {
     #[test]
     fn rejects_duplicate_mcp_ids() {
         let err = parse(
-            r#"[{"id":"x","name":"X","backend":"http://x/mcp","public":true},
-                {"id":"x","name":"Y","backend":"http://y/mcp","public":true}]"#,
+            r#"[{"id":"x","name":"X","backend":"http://x/mcp","no_auth":true},
+                {"id":"x","name":"Y","backend":"http://y/mcp","no_auth":true}]"#,
         )
         .unwrap_err();
         assert!(err.to_string().contains("duplicated"));

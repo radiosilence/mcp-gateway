@@ -80,13 +80,13 @@ describe("mcpRegistry", () => {
 
   it("omits what was not configured rather than emitting empty keys", () => {
     const [entry] = parse([
-      { id: "folk", name: "Folk", image: "x", public: true },
+      { id: "folk", name: "Folk", image: "x", noAuth: true },
     ]);
     expect(entry).toEqual({
       id: "folk",
       name: "Folk",
       backend: "http://mcp-gateway-mcp-folk.ns.svc.cluster.local:8080/mcp",
-      public: true,
+      no_auth: true,
     });
   });
 });

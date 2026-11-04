@@ -52,7 +52,7 @@ pub async fn handle(
         }
     };
 
-    let credentials = match mcp.public {
+    let credentials = match mcp.no_auth {
         true => None,
         false => match state
             .store
@@ -66,7 +66,7 @@ pub async fn handle(
             }
         },
     };
-    if credentials.is_none() && !mcp.public {
+    if credentials.is_none() && !mcp.no_auth {
         // Forwarded anyway: the backend answers with its own "not configured"
         // error, which the model can relay to the user.
         tracing::debug!(%sub, mcp = %id, "no credential stored");

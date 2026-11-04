@@ -49,7 +49,7 @@ export function mcpRegistry(
         id: m.id,
         name: m.name,
         backend: url(m.path),
-        ...(m.public && { public: true }),
+        ...(m.noAuth && { no_auth: true }),
         ...(m.credentialHeader && { credential_header: m.credentialHeader }),
         ...(m.fields?.length && {
           fields: m.fields.map((f) => ({

@@ -20,7 +20,7 @@ pub(super) enum Verified {
     Unknown,
 }
 
-/// Ask a backend whether it accepts the stored credentials. A public MCP has
+/// Ask a backend whether it accepts the stored credentials. A `no_auth` MCP has
 /// none, so it is asked with none: the answer is then whether the backend's
 /// own account works.
 pub(super) async fn verify(
@@ -29,7 +29,7 @@ pub(super) async fn verify(
     credentials: Option<&CredentialSet>,
 ) -> Verified {
     let none = CredentialSet::new();
-    let credentials = match (credentials, mcp.public) {
+    let credentials = match (credentials, mcp.no_auth) {
         (Some(credentials), _) => credentials,
         (None, true) => &none,
         (None, false) => return Verified::Unknown,

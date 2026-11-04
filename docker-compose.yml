@@ -172,7 +172,7 @@ services:
           name: Folk (Mainly Norfolk)
           backend: http://folk-mcp:8080/mcp
           graphql: http://folk-mcp:8080/graphql
-          public: true
+          no_auth: true
 
         # TfL works anonymously; a key only raises the rate limit, so the one
         # field is optional and the MCP is usable the moment you log in.
@@ -231,7 +231,7 @@ services:
       - "8080"
 
   # The English folk archive, read-only. No credentials: mainlynorfolk.info is
-  # a public website, so this is the registry's first `"public": true` entry —
+  # a public website, so this is the registry's first `"no_auth": true` entry —
   # it appears on the dashboard already connected, with no form to fill in.
   # `--graphql` alongside so the dashboard can reach the same schema a model
   # sees. The binary *is* the MCP server, so there is no `mcp` argument.

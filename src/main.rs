@@ -30,6 +30,7 @@ use axum::routing::{any, get, patch, post};
 use tower_governor::GovernorLayer;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::key_extractor::SmartIpKeyExtractor;
+use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
@@ -184,9 +185,11 @@ async fn main() -> Result<()> {
         .route("/auth/callback", get(auth::routes::callback))
         .layer(GovernorLayer::new(auth_governor));
 
-    let app = Router::new()
+    // Compression covers the dashboard and its assets only. Proxied MCP
+    // responses pass through as the backend encoded them, and the default
+    // predicate leaves `text/event-stream` alone, since an encoder buffers.
+    let dashboard_routes = Router::new()
         .route("/", get(dashboard::index))
-        .route("/healthz", get(|| async { "ok" }))
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
         .route("/logout", post(auth::routes::logout))
@@ -205,6 +208,11 @@ async fn main() -> Result<()> {
             "/dashboard/{mcp_id}/delete",
             post(dashboard::delete_credential),
         )
+        .layer(CompressionLayer::new());
+
+    let app = Router::new()
+        .route("/healthz", get(|| async { "ok" }))
+        .merge(dashboard_routes)
         .route(
             "/.well-known/oauth-protected-resource",
             get(well_known::protected_resource),

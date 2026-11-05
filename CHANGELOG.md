@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.0
+
+### Added
+
+- **Fields can name an autocomplete token.** A credential field's `autocomplete` goes on its input, so password managers fill a card number or email as what it is; a secret with one renders as a plain input, since managers take any password input for a password.
+
 ## 0.12.1
 
 ### Changed

@@ -1,7 +1,7 @@
 {% import "controls.html" as ui %}
 <section id="mcp-{{ m.id }}" class="card mt-6 p-6 shadow-xs">
   {%- if !m.notice.text.is_empty() %}
-  <p class="mb-3 text-xs {% if m.notice.bad %}warn{% else %}text-emerald-600 dark:text-emerald-400{% endif %}">{{ m.notice.text }}</p>
+  <p class="mb-3 text-xs {% if m.notice.bad %}warn{% else %}text-brand{% endif %}">{{ m.notice.text }}</p>
   {%- endif %}
   <div class="flex items-center justify-between">
     <h2 class="text-base font-semibold">{{ m.name }}</h2>
@@ -38,7 +38,7 @@
   <p class="muted mt-6 text-xs">No credentials to enter, nothing stored.</p>
   {% else %}
   <details class="mt-6 text-xs">
-    <summary class="muted cursor-pointer select-none hover:text-slate-900 dark:hover:text-white">Edit credentials</summary>
+    <summary class="muted cursor-pointer select-none hover:text-strong">Edit credentials</summary>
     {% call ui::credential_form(m) %}{% endcall %}
   </details>
 
@@ -46,13 +46,13 @@
         data-confirm="Disconnect {{ m.name }}? This wipes your stored credentials."
         data-on:submit="confirm(el.dataset.confirm) && @post(el.getAttribute('action'))"
         class="mt-3">
-    <button class="rounded-lg px-3 py-2 text-xs font-medium text-red-600 ring-1 ring-red-300 ring-inset hover:bg-red-50 dark:text-red-400 dark:ring-red-800/60 dark:hover:bg-red-950/40">Disconnect</button>
+    <button class="rounded-lg px-3 py-2 text-xs font-medium text-bad ring-1 ring-bad/40 ring-inset hover:bg-bad/10">Disconnect</button>
   </form>
   {% endif %}
 
   {% else %}
   {% if !m.key_help_url.is_empty() %}
-  <p class="muted mt-1.5 text-xs">Get credentials: <a class="underline" href="{{ m.key_help_url }}" target="_blank" rel="noreferrer">{{ m.key_help_url }}</a></p>
+  <p class="muted mt-1.5 text-xs">Get credentials: <a href="{{ m.key_help_url }}" target="_blank" rel="noreferrer">{{ m.key_help_url }}</a></p>
   {% endif %}
   {% call ui::credential_form(m) %}{% endcall %}
   {% endif %}

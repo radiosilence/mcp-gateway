@@ -2,27 +2,27 @@
     differ only in surface, so the swap cannot move the page. -#}
 {% macro field_box() %}mt-1.5 w-full rounded-lg border-0 px-3 py-2 text-sm ring-1 ring-inset outline-hidden{% endmacro %}
 
-{% macro field_control() %}{% call field_box() %}{% endcall %} bg-slate-100 dark:bg-slate-800 ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500{% endmacro %}
+{% macro field_control() %}{% call field_box() %}{% endcall %} bg-bg ring-rule focus:ring-2 focus:ring-brand{% endmacro %}
 
 {#- Filled rather than empty: an empty pulsing control reads as "nothing
     chosen". The surface is stated in full here rather than layered over the
     control's, because two `bg-*` utilities on one element is a coin toss. -#}
-{% macro field_skeleton() %}{% call field_box() %}{% endcall %} pointer-events-none animate-pulse text-transparent bg-slate-200 dark:bg-slate-700 ring-slate-200 dark:ring-slate-700{% endmacro %}
+{% macro field_skeleton() %}{% call field_box() %}{% endcall %} pointer-events-none animate-pulse text-transparent bg-rule ring-rule{% endmacro %}
 
-{% macro field_status(id, text, bad) %}<span id="{{ id }}" class="mt-1 block text-xs {% if bad %}warn{% else %}faint{% endif %}">{{ text }}</span>{% endmacro %}
+{% macro field_status(id, text, bad) %}<span id="{{ id }}" class="mt-1 block text-xs {% if bad %}warn{% else %}muted{% endif %}">{{ text }}</span>{% endmacro %}
 
 {#- Colours arrive as whole class names because Tailwind only sees literals. A
     non-empty `load_url` makes the badge fetch its own replacement. -#}
 {% macro badge(id, colours, dot, label, load_url) %}<span id="{{ id }}"{% if !load_url.is_empty() %} data-url="{{ load_url }}" data-init="@get(el.dataset.url)" aria-busy="true"{% endif %} class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 {{ colours }}"><span class="h-1.5 w-1.5 rounded-full {{ dot }}"></span> {{ label }}</span>{% endmacro %}
 
 {% macro copy_row(summary, intro, value) %}
-<details class="rounded-lg ring-1 ring-inset ring-slate-200 dark:ring-slate-700 open:bg-slate-50 dark:open:bg-slate-800/50">
+<details class="rounded-lg ring-1 ring-inset ring-rule open:bg-bg">
   <summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-medium">{{ summary }}</summary>
   <div class="px-4 pt-1 pb-4">
     <p class="muted text-xs">{{ intro }}</p>
     <div class="mt-2 flex items-center gap-2">
       <code class="code-box flex-1 overflow-x-auto">{{ value }}</code>
-      <button type="button" value="{{ value }}" data-on:click="@copy(el.value)" class="shrink-0 rounded-md bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:opacity-90 dark:bg-white dark:text-slate-900">Copy</button>
+      <button type="button" value="{{ value }}" data-on:click="@copy(el.value)" class="shrink-0 rounded-md bg-rule px-3 py-2 text-xs font-medium text-ink hover:bg-hover">Copy</button>
     </div>
   </div>
 </details>
@@ -39,12 +39,12 @@
   {% if m.has_stored_secret %}<p class="muted text-xs">Leave a password blank to keep the stored one.</p>{% endif %}
   {% for f in m.fields %}{% if !f.from_backend %}
   <label class="block">
-    <span class="muted text-xs">{{ f.label }}{% if !f.required %} <span class="faint">(optional)</span>{% endif %}{% if f.secret && f.is_set %} <span class="text-emerald-600 dark:text-emerald-400">· set</span>{% endif %}</span>
+    <span class="muted text-xs">{{ f.label }}{% if !f.required %} <span class="muted">(optional)</span>{% endif %}{% if f.secret && f.is_set %} <span class="text-brand">· set</span>{% endif %}</span>
     <input type="{{ f.input_type }}" name="{{ f.id }}" placeholder="{{ f.placeholder }}"
            value="{{ f.value }}" autocomplete="{{ f.autocomplete }}" {% if f.required && !(f.secret && f.is_set) %}required{% endif %}
            class="{% call field_control() %}{% endcall %}" />
   </label>
   {% endif %}{% endfor %}
-  <button type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500">{% if m.has_credential %}Save{% else %}Connect{% endif %}</button>
+  <button type="submit" class="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-bg transition hover:opacity-90">{% if m.has_credential %}Save{% else %}Connect{% endif %}</button>
 </form>
 {% endmacro %}

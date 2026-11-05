@@ -3,3 +3,4 @@
 *.log
 /cloudflared/
 /node_modules
+/.npmrc.auth

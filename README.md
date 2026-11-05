@@ -265,6 +265,7 @@ Such an MCP declares `fields`, and each field is injected into its own header:
 | `label` | shown in the dashboard |
 | `header` | header the backend reads this value from |
 | `secret` | default `true`; secrets render as password inputs and are never echoed back. Non-secret values (a server URL) are shown so they can be edited in place |
+| `autocomplete` | the input's HTML `autocomplete` token, such as `cc-number` or `email`, so a password manager fills it as what it is. A secret with one renders as a plain input rather than a password input, which managers take for a password and offer to generate; it is still never echoed back |
 | `default` | what an optional field falls back to when left blank; shown as a `Default: …` placeholder rather than prefilled, so the box reads as safe to skip |
 | `hint` | placeholder text; overrides the `Default: …` placeholder |
 | `required` | default `true`; an optional field left blank with no default simply isn't stored, and the backend applies its own |

@@ -67,6 +67,8 @@ pub(super) struct FieldView {
     pub(super) label: String,
     /// `password` or `text`.
     pub(super) input_type: String,
+    /// The input's `autocomplete` token; `off` unless the field names one.
+    pub(super) autocomplete: String,
     pub(super) secret: bool,
     /// Whether something is stored; shown for secrets, whose box is empty.
     pub(super) is_set: bool,
@@ -168,7 +170,13 @@ impl McpView {
                         .unwrap_or_default(),
                 },
                 is_set: stored.as_ref().is_some_and(|s| s.contains_key(&f.id)),
-                input_type: if f.secret { "password" } else { "text" }.to_string(),
+                input_type: if f.secret && f.autocomplete.is_none() {
+                    "password"
+                } else {
+                    "text"
+                }
+                .to_string(),
+                autocomplete: f.autocomplete.clone().unwrap_or_else(|| "off".into()),
                 secret: f.secret,
                 // A default is a placeholder, not a prefill, so the box reads as
                 // "leave it alone".
@@ -297,6 +305,7 @@ mod tests {
                 id: "calendar".into(),
                 label: "Calendar".into(),
                 input_type: "text".into(),
+                autocomplete: "off".into(),
                 secret: false,
                 is_set: false,
                 placeholder: String::new(),
@@ -472,6 +481,7 @@ mod preview {
             id: id.into(),
             label: label.into(),
             input_type: "text".into(),
+            autocomplete: "off".into(),
             secret: false,
             is_set: false,
             placeholder: String::new(),
@@ -487,6 +497,7 @@ mod preview {
             id: id.into(),
             label: label.into(),
             input_type: "password".into(),
+            autocomplete: "off".into(),
             secret: true,
             is_set: true,
             placeholder: "fmu1-…".into(),

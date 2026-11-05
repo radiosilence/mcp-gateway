@@ -57,6 +57,7 @@ export function mcpRegistry(
             label: f.label,
             header: f.header,
             ...(f.secret !== undefined && { secret: f.secret }),
+            ...(f.autocomplete && { autocomplete: f.autocomplete }),
             ...(f.default && { default: f.default }),
             ...(f.hint && { hint: f.hint }),
             ...(f.required !== undefined && { required: f.required }),

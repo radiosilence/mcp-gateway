@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.1
+
+### Changed
+
+- **Compressed dashboard.** The dashboard's pages, fragments and assets are compressed with brotli, zstd or gzip, whichever the browser prefers; they were sent uncompressed. Proxied MCP traffic is passed through as before.
+
 ## 0.12.0
 
 ### Added

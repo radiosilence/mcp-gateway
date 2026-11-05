@@ -41,7 +41,7 @@
   <label class="block">
     <span class="muted text-xs">{{ f.label }}{% if !f.required %} <span class="faint">(optional)</span>{% endif %}{% if f.secret && f.is_set %} <span class="text-emerald-600 dark:text-emerald-400">· set</span>{% endif %}</span>
     <input type="{{ f.input_type }}" name="{{ f.id }}" placeholder="{{ f.placeholder }}"
-           value="{{ f.value }}" autocomplete="off" {% if f.required && !(f.secret && f.is_set) %}required{% endif %}
+           value="{{ f.value }}" autocomplete="{{ f.autocomplete }}" {% if f.required && !(f.secret && f.is_set) %}required{% endif %}
            class="{% call field_control() %}{% endcall %}" />
   </label>
   {% endif %}{% endfor %}

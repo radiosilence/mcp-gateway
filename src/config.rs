@@ -18,6 +18,12 @@ pub struct CredentialField {
     /// Render as a password input and never echo the stored value back.
     #[serde(default = "default_true")]
     pub secret: bool,
+    /// The input's HTML `autocomplete` token, such as `cc-number`, so a
+    /// password manager fills it as what it is. A secret with one renders as a
+    /// plain input: managers read a password input as a password, whatever its
+    /// token, and offer to generate one.
+    #[serde(default)]
+    pub autocomplete: Option<String>,
     /// Stored when an optional field is left blank.
     #[serde(default)]
     pub default: Option<String>,
@@ -272,6 +278,7 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
             label: "API key".into(),
             header,
             secret: true,
+            autocomplete: None,
             default: None,
             hint: m.key_hint.clone(),
             required: true,
@@ -308,6 +315,18 @@ fn normalize(mut m: Mcp) -> Result<Mcp> {
             m.id,
             f.id,
             f.header
+        );
+        anyhow::ensure!(
+            f.autocomplete
+                .as_deref()
+                .is_none_or(|token| !token.is_empty()
+                    && token.bytes().all(|b| b.is_ascii_lowercase()
+                        || b.is_ascii_digit()
+                        || b == b'-'
+                        || b == b' ')),
+            "MCP {:?} field {:?} has an invalid autocomplete token",
+            m.id,
+            f.id
         );
         // Its choices need stored credentials, so it is not on the connect form.
         anyhow::ensure!(
@@ -375,6 +394,24 @@ mod tests {
         );
         assert!(!fields[2].required);
         assert_eq!(mcps[0].primary_field(), "username");
+    }
+
+    #[test]
+    fn autocomplete_tokens_are_checked() {
+        let card = |token: &str| {
+            parse(&format!(
+                r#"[{{"id":"spoons","name":"Spoons","backend":"http://x/mcp","fields":[
+                     {{"id":"number","label":"Card","header":"X-Card","autocomplete":"{token}"}}]}}]"#
+            ))
+        };
+        assert_eq!(
+            card("cc-number").unwrap()[0].fields[0]
+                .autocomplete
+                .as_deref(),
+            Some("cc-number")
+        );
+        assert!(card("cc-number\\\" onfocus=x").is_err());
+        assert!(card("").is_err());
     }
 
     #[test]

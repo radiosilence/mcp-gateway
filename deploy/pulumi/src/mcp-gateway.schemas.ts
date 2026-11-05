@@ -10,6 +10,11 @@ export const McpCredentialFieldSchema = z.object({
   label: z.string(),
   header: z.string(),
   secret: z.boolean().optional(),
+  /**
+   * The input's HTML `autocomplete` token (`cc-number`, `email`), so password
+   * managers fill it as what it is. A secret with one renders as a plain input.
+   */
+  autocomplete: z.string().optional(),
   default: z.string().optional(),
   hint: z.string().optional(),
   required: z.boolean().optional(),

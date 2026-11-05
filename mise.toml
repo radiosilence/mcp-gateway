@@ -22,9 +22,22 @@ AUTH_HOST = "auth.radiosilence.dev"
 TUNNEL_NAME = "mcp-gateway-dev"
 _.path = ["node_modules/.bin"]
 
+[tasks.auth]
+description = "Write the GitHub Packages token that .npmrc reads"
+run = '''
+token="${GH_TOKEN:-$(gh auth token 2>/dev/null || true)}"
+if [ -z "$token" ]; then
+  echo "no GitHub token: run 'gh auth login', or set GH_TOKEN" >&2
+  exit 1
+fi
+printf '//npm.pkg.github.com/:_authToken=%s\n' "$token" > .npmrc.auth
+'''
+
 [tasks.web]
-description = "Rebuild assets/app.js and assets/app.css after changing web/ or a template"
-run = "aube install --frozen-lockfile && rolldown -c && tailwindcss -i web/app.css -o assets/app.css --minify"
+description = "Rebuild assets/ after changing web/ or a template"
+# The theme's @font-face resolves beside the stylesheet, so its font is copied
+# next to it.
+run = "aube install --frozen-lockfile && rolldown -c && tailwindcss -i web/app.css -o assets/app.css --minify && cp node_modules/@radiosilence/theme/geist-mono.woff2 assets/"
 
 [tasks.web-check]
 description = "Typecheck, lint and format-check web/"

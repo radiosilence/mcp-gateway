@@ -53,6 +53,14 @@ async fn app_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
 }
 
+/// The theme's typeface, which its `@font-face` loads from beside the
+/// stylesheet.
+const FONT: &[u8] = include_bytes!("../assets/geist-mono.woff2");
+
+async fn font() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "font/woff2")], FONT)
+}
+
 async fn app_js() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
@@ -213,6 +221,8 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .merge(dashboard_routes)
+        // WOFF2 is already compressed, so the font sits outside that layer.
+        .route("/assets/geist-mono.woff2", get(font))
         .route(
             "/.well-known/oauth-protected-resource",
             get(well_known::protected_resource),
@@ -338,6 +348,11 @@ mod tests {
     fn the_embedded_assets_are_real() {
         assert!(APP_CSS.contains("box-sizing:border-box"), "no preflight");
         assert!(APP_CSS.contains("max-w-2xl"), "utilities missing");
+        assert!(APP_CSS.contains("Geist Mono"), "the theme is missing");
+        assert!(
+            FONT.starts_with(b"wOF2"),
+            "geist-mono.woff2 is not a WOFF2 font"
+        );
         assert!(
             APP_JS.contains("datastar-fetch") && registered_plugins().contains(&"copy"),
             "app.js is not the bundle"

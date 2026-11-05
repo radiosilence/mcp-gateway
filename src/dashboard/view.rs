@@ -402,21 +402,12 @@ mod tests {
             only_skeleton,
             [
                 "animate-pulse",
-                "bg-slate-200",
-                "dark:bg-slate-700",
+                "bg-rule",
                 "pointer-events-none",
                 "text-transparent",
             ]
         );
-        assert_eq!(
-            only_loaded,
-            [
-                "bg-slate-100",
-                "dark:bg-slate-800",
-                "focus:ring-2",
-                "focus:ring-indigo-500",
-            ]
-        );
+        assert_eq!(only_loaded, ["bg-bg", "focus:ring-2", "focus:ring-brand",]);
     }
 
     /// Both pages, since the login page is the one in front of you when the

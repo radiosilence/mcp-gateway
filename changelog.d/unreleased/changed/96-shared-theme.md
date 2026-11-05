@@ -1,0 +1,1 @@
+- **The dashboard uses the shared theme.** Its colours, type scale and Geist Mono typeface come from `@radiosilence/theme`, the same tokens as koan, slsk-mcp and the jaritanet auth pages, in place of Tailwind's slate and indigo. It is dark by default and light when the device asks.

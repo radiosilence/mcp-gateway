@@ -96,12 +96,20 @@ docker compose up --build
 You can exercise the whole browser flow (login, set token, test connection) at
 `http://localhost:8080` directly — no HTTPS needed for a local browser.
 
-The page loads nothing from the internet: the stylesheet and script are embedded
-in the binary. Both are built from `web/` (TypeScript bundled with the vendored
-Datastar by rolldown, and Tailwind v4 reading class names from the templates) and
-committed, so a cargo build needs no node toolchain. **After changing `web/` or a
-template, run `mise run web`** and commit the result; CI rebuilds both and fails
-if they differ. `mise run web-check` typechecks, lints and format-checks.
+The page loads nothing from the internet: the stylesheet, script and font are
+embedded in the binary. They are built from `web/` (TypeScript bundled with the
+vendored Datastar by rolldown, and Tailwind v4 reading class names from the
+templates) and committed, so a cargo build needs no node toolchain. **After
+changing `web/` or a template, run `mise run web`** and commit the result; CI
+rebuilds them and fails if they differ. `mise run web-check` typechecks, lints
+and format-checks.
+
+The colours, type scale and typeface come from
+[`@radiosilence/theme`](https://github.com/radiosilence/theme), which koan,
+slsk-mcp and jaritanet's auth pages share, so the templates use its tokens
+(`bg-surface`, `text-brand`, `ring-rule`, …) rather than Tailwind's palette. It is
+on GitHub Packages, which needs a token to install: run `mise run auth` once to
+write it from your `gh` login.
 
 ### Testing the Claude connector (Cloudflare tunnel)
 

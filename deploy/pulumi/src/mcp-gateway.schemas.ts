@@ -46,8 +46,25 @@ export const McpSchema = z
   .object({
     id: Slug,
     name: z.string(),
-    /** The gateway deploys this image as the backend. */
+    /**
+     * The gateway deploys this image as the backend. Its pod runs under
+     * `runAsNonRoot`, which refuses an image that would run as root and cannot
+     * verify one whose `USER` is a name rather than a uid. An image declaring
+     * a numeric non-root `USER` needs nothing more; otherwise set `runAsUser`.
+     */
     image: z.string().optional(),
+    /**
+     * The uid an `image` backend runs as, for an image whose `USER` is a name
+     * (`node`, `nonroot`) or absent. Must not be 0.
+     */
+    runAsUser: z.int().min(1).max(2147483647).optional(),
+    /**
+     * The gid to go with `runAsUser`, when the image's user has a primary group
+     * of a different number (an Alpine `adduser -S` user is 100:101). Left
+     * out, the runtime takes the primary group from the image's passwd entry.
+     * Not 0: the root group can read whatever the image left group-readable.
+     */
+    runAsGroup: z.int().min(1).max(2147483647).optional(),
     /**
      * A backend deployed by something else, as `http://host:port`: one whose
      * pod needs what a generic backend deployment cannot give it — a node,
@@ -96,6 +113,12 @@ export const McpSchema = z
         .length === 1,
     { message: "set exactly one of credentialHeader, fields, or noAuth" },
   )
+  .refine((b) => b.runAsUser === undefined || !!b.image, {
+    message: "runAsUser applies only to a backend deployed here (image)",
+  })
+  .refine((b) => b.runAsGroup === undefined || b.runAsUser !== undefined, {
+    message: "runAsGroup needs runAsUser",
+  })
   .refine((b) => !!b.image !== !!b.url, {
     message: "set exactly one of image (deployed here) or url (deployed elsewhere)",
   });

@@ -1,0 +1,1 @@
+- **Every deployed pod runs confined.** The Pulumi component runs each container under `runAsNonRoot` with no capabilities, no privilege escalation and the default seccomp profile.

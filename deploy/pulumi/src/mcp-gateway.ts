@@ -4,10 +4,27 @@ import * as random from "@pulumi/random";
 import * as yaml from "yaml";
 import type * as z from "zod";
 import type { Deployed } from "./contract.ts";
-import { UNTRACKED, VERSIONS } from "./versions.ts";
+import { HYDRA_USER, UNTRACKED, VERSIONS } from "./versions.ts";
 import { McpGatewayConfSchema } from "./mcp-gateway.schemas.ts";
 
 const SECRETS_NAME = "mcp-gateway-secrets";
+
+/**
+ * What every pod and container here runs under. None of them needs root, a
+ * capability, a setuid binary or the Kubernetes API (each pod also mounts no
+ * service account token), and each is reachable from the internet directly or
+ * one hop behind the gateway, so whatever compromises one gets none of those.
+ * The pod-level half also covers any container added later, ephemeral debug
+ * containers included: `kubectl debug` here needs a non-root image.
+ */
+const POD_CONFINED = {
+  runAsNonRoot: true,
+  seccompProfile: { type: "RuntimeDefault" },
+};
+const CONFINED = {
+  allowPrivilegeEscalation: false,
+  capabilities: { drop: ["ALL"] },
+};
 /** An env `valueFrom` pointing at a key in the stack's Secret. */
 const secretRef = (key: string) => ({
   valueFrom: { secretKeyRef: { name: SECRETS_NAME, key } },
@@ -252,6 +269,8 @@ export function createMcpGateway(
             ...(conf.node && {
               nodeSelector: { "kubernetes.io/hostname": conf.node },
             }),
+            automountServiceAccountToken: false,
+            securityContext: POD_CONFINED,
             containers: [
               {
                 name: "postgres",
@@ -270,7 +289,7 @@ export function createMcpGateway(
                 // drops privileges through gosu, whose setuid never returns on
                 // Ubuntu's 7.0.0-42 kernel; started as this user it runs
                 // postgres directly. The data directory is already its own.
-                securityContext: { runAsUser: 999, runAsGroup: 999 },
+                securityContext: { ...CONFINED, runAsUser: 999, runAsGroup: 999 },
                 volumeMounts: [
                   { name: "data", mountPath: "/var/lib/postgresql/data" },
                   { name: "initdb", mountPath: "/docker-entrypoint-initdb.d" },
@@ -341,12 +360,15 @@ export function createMcpGateway(
           },
           spec: {
             restartPolicy: "OnFailure",
+            automountServiceAccountToken: false,
+            securityContext: POD_CONFINED,
             containers: [
               {
                 name: "migrate",
                 image: hydraImage,
                 args: ["migrate", "sql", "-e", "--yes"],
                 env: [{ name: "DSN", ...secretRef("hydra-dsn") }],
+                securityContext: { ...CONFINED, ...HYDRA_USER },
               },
             ],
           },
@@ -371,6 +393,8 @@ export function createMcpGateway(
             ...(conf.node && {
               nodeSelector: { "kubernetes.io/hostname": conf.node },
             }),
+            automountServiceAccountToken: false,
+            securityContext: POD_CONFINED,
             containers: [
               {
                 name: "hydra",
@@ -429,6 +453,7 @@ export function createMcpGateway(
                   initialDelaySeconds: 5,
                   periodSeconds: 10,
                 },
+                securityContext: { ...CONFINED, ...HYDRA_USER },
               },
             ],
           },
@@ -483,12 +508,21 @@ export function createMcpGateway(
               },
             },
             spec: {
+              automountServiceAccountToken: false,
+              securityContext: POD_CONFINED,
               containers: [
                 {
                   name: "mcp",
                   image: b.image,
                   args: b.args,
                   ports: [{ containerPort: b.port }],
+                  // The image's own uid unless the backend states one; see
+                  // `McpSchema.runAsUser`.
+                  securityContext: {
+                    ...CONFINED,
+                    ...(b.runAsUser !== undefined && { runAsUser: b.runAsUser }),
+                    ...(b.runAsGroup !== undefined && { runAsGroup: b.runAsGroup }),
+                  },
                 },
               ],
             },
@@ -521,6 +555,8 @@ export function createMcpGateway(
         template: {
           metadata: { labels: { app: "mcp-gateway" } },
           spec: {
+            automountServiceAccountToken: false,
+            securityContext: POD_CONFINED,
             containers: [
               {
                 name: "mcp-gateway",
@@ -562,7 +598,8 @@ export function createMcpGateway(
                   limits: conf.limits,
                   ...(conf.requests && { requests: conf.requests }),
                 },
-                securityContext: { allowPrivilegeEscalation: false },
+                // The image's own uid, 10001.
+                securityContext: CONFINED,
               },
             ],
           },

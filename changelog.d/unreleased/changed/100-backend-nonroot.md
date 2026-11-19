@@ -1,0 +1,1 @@
+- **Backend images must not run as root.** The Pulumi component refuses a backend image that runs as root or names its user rather than its uid, so it fails at container creation. Rebuild it with a numeric non-root `USER`, or set the new `runAsUser` on the backend.

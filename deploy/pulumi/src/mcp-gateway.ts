@@ -8,6 +8,21 @@ import { UNTRACKED, VERSIONS } from "./versions.ts";
 import { McpGatewayConfSchema } from "./mcp-gateway.schemas.ts";
 
 const SECRETS_NAME = "mcp-gateway-secrets";
+
+/**
+ * What every container here runs under. None of them needs a capability or a
+ * setuid binary, and each is reachable from the internet directly or one hop
+ * behind the gateway, so whatever compromises one gets neither.
+ */
+const CONFINED = {
+  runAsNonRoot: true,
+  allowPrivilegeEscalation: false,
+  capabilities: { drop: ["ALL"] },
+  seccompProfile: { type: "RuntimeDefault" },
+};
+
+/** The `ory` user of the Hydra image, as numbers `runAsNonRoot` can check. */
+const HYDRA_USER = { runAsUser: 100, runAsGroup: 101 };
 /** An env `valueFrom` pointing at a key in the stack's Secret. */
 const secretRef = (key: string) => ({
   valueFrom: { secretKeyRef: { name: SECRETS_NAME, key } },
@@ -270,7 +285,7 @@ export function createMcpGateway(
                 // drops privileges through gosu, whose setuid never returns on
                 // Ubuntu's 7.0.0-42 kernel; started as this user it runs
                 // postgres directly. The data directory is already its own.
-                securityContext: { runAsUser: 999, runAsGroup: 999 },
+                securityContext: { ...CONFINED, runAsUser: 999, runAsGroup: 999 },
                 volumeMounts: [
                   { name: "data", mountPath: "/var/lib/postgresql/data" },
                   { name: "initdb", mountPath: "/docker-entrypoint-initdb.d" },
@@ -347,6 +362,7 @@ export function createMcpGateway(
                 image: hydraImage,
                 args: ["migrate", "sql", "-e", "--yes"],
                 env: [{ name: "DSN", ...secretRef("hydra-dsn") }],
+                securityContext: { ...CONFINED, ...HYDRA_USER },
               },
             ],
           },
@@ -429,6 +445,7 @@ export function createMcpGateway(
                   initialDelaySeconds: 5,
                   periodSeconds: 10,
                 },
+                securityContext: { ...CONFINED, ...HYDRA_USER },
               },
             ],
           },
@@ -489,6 +506,8 @@ export function createMcpGateway(
                   image: b.image,
                   args: b.args,
                   ports: [{ containerPort: b.port }],
+                  // The uid is the image's own; see `McpSchema.image`.
+                  securityContext: CONFINED,
                 },
               ],
             },
@@ -562,7 +581,8 @@ export function createMcpGateway(
                   limits: conf.limits,
                   ...(conf.requests && { requests: conf.requests }),
                 },
-                securityContext: { allowPrivilegeEscalation: false },
+                // The image's own uid, 10001.
+                securityContext: CONFINED,
               },
             ],
           },

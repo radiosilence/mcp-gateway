@@ -46,7 +46,11 @@ export const McpSchema = z
   .object({
     id: Slug,
     name: z.string(),
-    /** The gateway deploys this image as the backend. */
+    /**
+     * The gateway deploys this image as the backend. It must declare a numeric
+     * non-root `USER`: the pod runs under `runAsNonRoot`, which refuses to start
+     * an image that would run as root or names its user rather than its uid.
+     */
     image: z.string().optional(),
     /**
      * A backend deployed by something else, as `http://host:port`: one whose

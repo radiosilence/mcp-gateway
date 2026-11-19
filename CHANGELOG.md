@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.14.0
+
+### Security
+
+- **Every deployed pod runs confined.** The Pulumi component runs each container under `runAsNonRoot` with no capabilities, no privilege escalation and the default seccomp profile.
+
+### Changed
+
+- **Backend images must not run as root.** The Pulumi component refuses a backend image that runs as root or names its user rather than its uid, so it fails at container creation. Rebuild it with a numeric non-root `USER`, or set the new `runAsUser` on the backend.
+
 ## 0.13.1
 
 ### Changed

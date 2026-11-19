@@ -37,3 +37,10 @@ export const UNTRACKED = {
    */
   hydra: "oryd/hydra:v2.2.0",
 } as const;
+
+/**
+ * The `ory` user of the Hydra image above, as numbers: the image names its user,
+ * and `runAsNonRoot` can verify only a uid. An image built on another base can
+ * use different ids, so check these when moving the pin.
+ */
+export const HYDRA_USER = { runAsUser: 100, runAsGroup: 101 };

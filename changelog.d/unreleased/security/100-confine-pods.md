@@ -1,1 +1,1 @@
-- **Every deployed pod runs confined.** The Pulumi component runs each container under `runAsNonRoot` with no capabilities, no privilege escalation and the default seccomp profile. A backend image must declare a numeric non-root `USER`, or it is refused at start.
+- **Every deployed pod runs confined.** The Pulumi component runs each container under `runAsNonRoot` with no capabilities, no privilege escalation and the default seccomp profile.

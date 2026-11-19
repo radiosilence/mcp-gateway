@@ -47,11 +47,17 @@ export const McpSchema = z
     id: Slug,
     name: z.string(),
     /**
-     * The gateway deploys this image as the backend. It must declare a numeric
-     * non-root `USER`: the pod runs under `runAsNonRoot`, which refuses to start
-     * an image that would run as root or names its user rather than its uid.
+     * The gateway deploys this image as the backend. Its pod runs under
+     * `runAsNonRoot`, which refuses an image that would run as root and cannot
+     * verify one whose `USER` is a name rather than a uid. An image declaring
+     * a numeric non-root `USER` needs nothing more; otherwise set `runAsUser`.
      */
     image: z.string().optional(),
+    /**
+     * The uid (and gid) an `image` backend runs as, for an image whose `USER`
+     * is a name (`node`, `nonroot`) or absent. Must not be 0.
+     */
+    runAsUser: z.int().min(1).optional(),
     /**
      * A backend deployed by something else, as `http://host:port`: one whose
      * pod needs what a generic backend deployment cannot give it — a node,
@@ -100,6 +106,9 @@ export const McpSchema = z
         .length === 1,
     { message: "set exactly one of credentialHeader, fields, or noAuth" },
   )
+  .refine((b) => b.runAsUser === undefined || !!b.image, {
+    message: "runAsUser applies only to a backend deployed here (image)",
+  })
   .refine((b) => !!b.image !== !!b.url, {
     message: "set exactly one of image (deployed here) or url (deployed elsewhere)",
   });

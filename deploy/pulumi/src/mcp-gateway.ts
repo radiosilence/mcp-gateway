@@ -4,7 +4,7 @@ import * as random from "@pulumi/random";
 import * as yaml from "yaml";
 import type * as z from "zod";
 import type { Deployed } from "./contract.ts";
-import { UNTRACKED, VERSIONS } from "./versions.ts";
+import { HYDRA_USER, UNTRACKED, VERSIONS } from "./versions.ts";
 import { McpGatewayConfSchema } from "./mcp-gateway.schemas.ts";
 
 const SECRETS_NAME = "mcp-gateway-secrets";
@@ -20,9 +20,6 @@ const CONFINED = {
   capabilities: { drop: ["ALL"] },
   seccompProfile: { type: "RuntimeDefault" },
 };
-
-/** The `ory` user of the Hydra image, as numbers `runAsNonRoot` can check. */
-const HYDRA_USER = { runAsUser: 100, runAsGroup: 101 };
 /** An env `valueFrom` pointing at a key in the stack's Secret. */
 const secretRef = (key: string) => ({
   valueFrom: { secretKeyRef: { name: SECRETS_NAME, key } },
@@ -267,6 +264,10 @@ export function createMcpGateway(
             ...(conf.node && {
               nodeSelector: { "kubernetes.io/hostname": conf.node },
             }),
+            // A fresh volume can arrive root-owned, and an entrypoint started
+            // as 999 cannot chown it the way it would as root. fsGroup hands
+            // it over; OnRootMismatch skips the walk once it is done.
+            securityContext: { fsGroup: 999, fsGroupChangePolicy: "OnRootMismatch" },
             containers: [
               {
                 name: "postgres",
@@ -506,8 +507,15 @@ export function createMcpGateway(
                   image: b.image,
                   args: b.args,
                   ports: [{ containerPort: b.port }],
-                  // The uid is the image's own; see `McpSchema.image`.
-                  securityContext: CONFINED,
+                  // The image's own uid unless the backend states one; see
+                  // `McpSchema.runAsUser`.
+                  securityContext: {
+                    ...CONFINED,
+                    ...(b.runAsUser !== undefined && {
+                      runAsUser: b.runAsUser,
+                      runAsGroup: b.runAsUser,
+                    }),
+                  },
                 },
               ],
             },

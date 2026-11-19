@@ -44,6 +44,20 @@ An empty label set throws, because it would select every pod.
 Hydra's readiness probe runs inside its pod over loopback, so it does not depend
 on the CNI admitting node-originated traffic past the policy.
 
+## Every pod is confined
+
+Each container runs under `runAsNonRoot` with every capability dropped, no
+privilege escalation and the runtime's default seccomp profile. Everything here
+is reachable from the internet, directly or one hop behind the gateway, and none
+of it needs more.
+
+That constrains backend images. `runAsNonRoot` refuses an image that would run
+as root, and cannot verify one whose `USER` is a name, so a backend's image
+must declare a numeric non-root `USER`. For an image that does not, set
+`runAsUser` on the backend. An image that breaks the rule fails at container
+creation (`CreateContainerConfigError`), and the deploy waits on a rollout that
+cannot finish.
+
 ## What it does not do
 
 It has no address, no credentials and no opinion about what it fronts. Hostnames,

@@ -52,6 +52,10 @@ Everything else stays as in compose. The deltas:
   Not routing it is not enough: it authenticates no caller, so any pod that can
   reach it can accept a login as anyone. Restrict it by NetworkPolicy, as the
   Pulumi component does.
+- **Confined pods**: every container runs non-root with no capabilities, no
+  privilege escalation and seccomp `RuntimeDefault`. Compose leaves these to
+  the images. Backend images therefore need a numeric non-root `USER`, or an
+  explicit `runAsUser` (see `deploy/pulumi/README.md`).
 - **Drop `--dev`**: run Hydra `serve all` (no `--dev`). Dev mode relaxes
   security and permits http/lax DCR — unsafe for prod. Configure real DCR policy
   and `SERVE_PUBLIC_CORS_ENABLED` as needed.

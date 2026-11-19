@@ -93,3 +93,29 @@ describe("McpSchema placement", () => {
     expect(() => McpSchema.parse(creds)).toThrow();
   });
 });
+
+describe("McpSchema user", () => {
+  const creds = { id: "x", name: "X", credentialHeader: "X-Token", image: "i" };
+
+  it("takes a uid, and a gid with it, for an image deployed here", () => {
+    const b = McpSchema.parse({ ...creds, runAsUser: 100, runAsGroup: 101 });
+    expect([b.runAsUser, b.runAsGroup]).toEqual([100, 101]);
+  });
+
+  // runAsNonRoot would refuse it at start anyway; the schema says so earlier.
+  it("refuses root", () => {
+    expect(() => McpSchema.parse({ ...creds, runAsUser: 0 })).toThrow();
+  });
+
+  // Silently ignored otherwise: the pod is someone else's.
+  it("refuses a uid for a backend deployed elsewhere", () => {
+    const { image: _, ...byUrl } = creds;
+    expect(() =>
+      McpSchema.parse({ ...byUrl, url: "http://a:1", runAsUser: 100 }),
+    ).toThrow();
+  });
+
+  it("refuses a gid without a uid", () => {
+    expect(() => McpSchema.parse({ ...creds, runAsGroup: 101 })).toThrow();
+  });
+});

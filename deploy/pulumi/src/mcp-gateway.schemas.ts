@@ -54,10 +54,16 @@ export const McpSchema = z
      */
     image: z.string().optional(),
     /**
-     * The uid (and gid) an `image` backend runs as, for an image whose `USER`
-     * is a name (`node`, `nonroot`) or absent. Must not be 0.
+     * The uid an `image` backend runs as, for an image whose `USER` is a name
+     * (`node`, `nonroot`) or absent. Must not be 0.
      */
     runAsUser: z.int().min(1).optional(),
+    /**
+     * The gid to go with `runAsUser`, when the image's user has a primary group
+     * of a different number (an Alpine `adduser -S` user is 100:101). Defaults
+     * to `runAsUser`.
+     */
+    runAsGroup: z.int().min(0).optional(),
     /**
      * A backend deployed by something else, as `http://host:port`: one whose
      * pod needs what a generic backend deployment cannot give it — a node,
@@ -108,6 +114,9 @@ export const McpSchema = z
   )
   .refine((b) => b.runAsUser === undefined || !!b.image, {
     message: "runAsUser applies only to a backend deployed here (image)",
+  })
+  .refine((b) => b.runAsGroup === undefined || b.runAsUser !== undefined, {
+    message: "runAsGroup needs runAsUser",
   })
   .refine((b) => !!b.image !== !!b.url, {
     message: "set exactly one of image (deployed here) or url (deployed elsewhere)",

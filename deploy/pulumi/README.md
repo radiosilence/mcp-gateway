@@ -54,7 +54,8 @@ of it needs more.
 That constrains backend images. `runAsNonRoot` refuses an image that would run
 as root, and cannot verify one whose `USER` is a name, so a backend's image
 must declare a numeric non-root `USER`. For an image that does not, set
-`runAsUser` on the backend. An image that breaks the rule fails at container
+`runAsUser` on the backend, plus `runAsGroup` when the user's primary group has
+a different number. An image that breaks the rule fails at container
 creation (`CreateContainerConfigError`), and the deploy waits on a rollout that
 cannot finish.
 

@@ -10,15 +10,18 @@ import { McpGatewayConfSchema } from "./mcp-gateway.schemas.ts";
 const SECRETS_NAME = "mcp-gateway-secrets";
 
 /**
- * What every container here runs under. None of them needs a capability or a
- * setuid binary, and each is reachable from the internet directly or one hop
- * behind the gateway, so whatever compromises one gets neither.
+ * What every pod and container here runs under. None of them needs root, a
+ * capability or a setuid binary, and each is reachable from the internet
+ * directly or one hop behind the gateway, so whatever compromises one gets
+ * none of those. The pod-level half also covers any container added later.
  */
-const CONFINED = {
+const POD_CONFINED = {
   runAsNonRoot: true,
+  seccompProfile: { type: "RuntimeDefault" },
+};
+const CONFINED = {
   allowPrivilegeEscalation: false,
   capabilities: { drop: ["ALL"] },
-  seccompProfile: { type: "RuntimeDefault" },
 };
 /** An env `valueFrom` pointing at a key in the stack's Secret. */
 const secretRef = (key: string) => ({
@@ -264,10 +267,7 @@ export function createMcpGateway(
             ...(conf.node && {
               nodeSelector: { "kubernetes.io/hostname": conf.node },
             }),
-            // A fresh volume can arrive root-owned, and an entrypoint started
-            // as 999 cannot chown it the way it would as root. fsGroup hands
-            // it over; OnRootMismatch skips the walk once it is done.
-            securityContext: { fsGroup: 999, fsGroupChangePolicy: "OnRootMismatch" },
+            securityContext: POD_CONFINED,
             containers: [
               {
                 name: "postgres",
@@ -357,6 +357,7 @@ export function createMcpGateway(
           },
           spec: {
             restartPolicy: "OnFailure",
+            securityContext: POD_CONFINED,
             containers: [
               {
                 name: "migrate",
@@ -388,6 +389,7 @@ export function createMcpGateway(
             ...(conf.node && {
               nodeSelector: { "kubernetes.io/hostname": conf.node },
             }),
+            securityContext: POD_CONFINED,
             containers: [
               {
                 name: "hydra",
@@ -501,6 +503,7 @@ export function createMcpGateway(
               },
             },
             spec: {
+              securityContext: POD_CONFINED,
               containers: [
                 {
                   name: "mcp",
@@ -513,7 +516,7 @@ export function createMcpGateway(
                     ...CONFINED,
                     ...(b.runAsUser !== undefined && {
                       runAsUser: b.runAsUser,
-                      runAsGroup: b.runAsUser,
+                      runAsGroup: b.runAsGroup ?? b.runAsUser,
                     }),
                   },
                 },
@@ -548,6 +551,7 @@ export function createMcpGateway(
         template: {
           metadata: { labels: { app: "mcp-gateway" } },
           spec: {
+            securityContext: POD_CONFINED,
             containers: [
               {
                 name: "mcp-gateway",

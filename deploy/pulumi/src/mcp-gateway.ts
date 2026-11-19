@@ -11,9 +11,11 @@ const SECRETS_NAME = "mcp-gateway-secrets";
 
 /**
  * What every pod and container here runs under. None of them needs root, a
- * capability or a setuid binary, and each is reachable from the internet
- * directly or one hop behind the gateway, so whatever compromises one gets
- * none of those. The pod-level half also covers any container added later.
+ * capability, a setuid binary or the Kubernetes API (each pod also mounts no
+ * service account token), and each is reachable from the internet directly or
+ * one hop behind the gateway, so whatever compromises one gets none of those.
+ * The pod-level half also covers any container added later, ephemeral debug
+ * containers included: `kubectl debug` here needs a non-root image.
  */
 const POD_CONFINED = {
   runAsNonRoot: true,
@@ -267,6 +269,7 @@ export function createMcpGateway(
             ...(conf.node && {
               nodeSelector: { "kubernetes.io/hostname": conf.node },
             }),
+            automountServiceAccountToken: false,
             securityContext: POD_CONFINED,
             containers: [
               {
@@ -357,6 +360,7 @@ export function createMcpGateway(
           },
           spec: {
             restartPolicy: "OnFailure",
+            automountServiceAccountToken: false,
             securityContext: POD_CONFINED,
             containers: [
               {
@@ -389,6 +393,7 @@ export function createMcpGateway(
             ...(conf.node && {
               nodeSelector: { "kubernetes.io/hostname": conf.node },
             }),
+            automountServiceAccountToken: false,
             securityContext: POD_CONFINED,
             containers: [
               {
@@ -503,6 +508,7 @@ export function createMcpGateway(
               },
             },
             spec: {
+              automountServiceAccountToken: false,
               securityContext: POD_CONFINED,
               containers: [
                 {
@@ -514,10 +520,8 @@ export function createMcpGateway(
                   // `McpSchema.runAsUser`.
                   securityContext: {
                     ...CONFINED,
-                    ...(b.runAsUser !== undefined && {
-                      runAsUser: b.runAsUser,
-                      runAsGroup: b.runAsGroup ?? b.runAsUser,
-                    }),
+                    ...(b.runAsUser !== undefined && { runAsUser: b.runAsUser }),
+                    ...(b.runAsGroup !== undefined && { runAsGroup: b.runAsGroup }),
                   },
                 },
               ],
@@ -551,6 +555,7 @@ export function createMcpGateway(
         template: {
           metadata: { labels: { app: "mcp-gateway" } },
           spec: {
+            automountServiceAccountToken: false,
             securityContext: POD_CONFINED,
             containers: [
               {

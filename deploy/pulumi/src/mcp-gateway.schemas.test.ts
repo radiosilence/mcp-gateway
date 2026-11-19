@@ -105,6 +105,7 @@ describe("McpSchema user", () => {
   // runAsNonRoot would refuse it at start anyway; the schema says so earlier.
   it("refuses root", () => {
     expect(() => McpSchema.parse({ ...creds, runAsUser: 0 })).toThrow();
+    expect(() => McpSchema.parse({ ...creds, runAsUser: 100, runAsGroup: 0 })).toThrow();
   });
 
   // Silently ignored otherwise: the pod is someone else's.
@@ -112,10 +113,10 @@ describe("McpSchema user", () => {
     const { image: _, ...byUrl } = creds;
     expect(() =>
       McpSchema.parse({ ...byUrl, url: "http://a:1", runAsUser: 100 }),
-    ).toThrow();
+    ).toThrow(/runAsUser applies only/);
   });
 
   it("refuses a gid without a uid", () => {
-    expect(() => McpSchema.parse({ ...creds, runAsGroup: 101 })).toThrow();
+    expect(() => McpSchema.parse({ ...creds, runAsGroup: 101 })).toThrow(/runAsGroup needs runAsUser/);
   });
 });

@@ -57,13 +57,14 @@ export const McpSchema = z
      * The uid an `image` backend runs as, for an image whose `USER` is a name
      * (`node`, `nonroot`) or absent. Must not be 0.
      */
-    runAsUser: z.int().min(1).optional(),
+    runAsUser: z.int().min(1).max(2147483647).optional(),
     /**
      * The gid to go with `runAsUser`, when the image's user has a primary group
-     * of a different number (an Alpine `adduser -S` user is 100:101). Defaults
-     * to `runAsUser`.
+     * of a different number (an Alpine `adduser -S` user is 100:101). Left
+     * out, the runtime takes the primary group from the image's passwd entry.
+     * Not 0: the root group can read whatever the image left group-readable.
      */
-    runAsGroup: z.int().min(0).optional(),
+    runAsGroup: z.int().min(1).max(2147483647).optional(),
     /**
      * A backend deployed by something else, as `http://host:port`: one whose
      * pod needs what a generic backend deployment cannot give it — a node,

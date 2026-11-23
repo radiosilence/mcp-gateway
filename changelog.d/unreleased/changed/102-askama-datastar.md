@@ -1,0 +1,1 @@
+- **Datastar 1.0.5, served on its own.** The dashboard's script imports Datastar from the copy the shared askama_datastar crate serves rather than bundling its own, so Datastar is cached for good at its own address and moves to new releases with the crate. It moves from 1.0.4 to 1.0.5.

@@ -1,4 +1,6 @@
-import { action, type FetchDetail } from "./vendor/datastar.js";
+// `datastar` is left out of the bundle and served as askama_datastar's copy;
+// main.rs names its address in place of the specifier (`APP_JS_BODY`).
+import { action, type FetchDetail } from "datastar";
 
 // `data-on:click="@copy(el.value)"`: the button carries what it copies.
 action({

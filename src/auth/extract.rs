@@ -36,7 +36,7 @@ impl FromRequestParts<AppState> for FragmentSession {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, AppError> {
-        if !parts.headers.contains_key("datastar-request") {
+        if !askama_datastar::is_datastar(&parts.headers) {
             return Err(AppError::Forbidden);
         }
         current_session(state, &parts.headers)

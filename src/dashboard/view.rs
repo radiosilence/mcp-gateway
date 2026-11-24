@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use askama::Template;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 
 use crate::config::{Config, Mcp};
 use crate::dashboard::options::Verified;
@@ -261,8 +261,8 @@ impl McpView {
 /// A fragment as `text/html`, which Datastar morphs into the page by the ids of
 /// its top-level elements.
 pub(super) fn render<T: Template>(template: T) -> Response {
-    match template.render() {
-        Ok(html) => Html(html).into_response(),
+    match askama_datastar::Html::render(&template) {
+        Ok(html) => html.into_response(),
         Err(e) => AppError::Internal(e.into()).into_response(),
     }
 }

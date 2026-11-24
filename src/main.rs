@@ -46,8 +46,21 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Embedded rather than loaded from a CDN: credentials are typed into these
 /// pages, so no third-party script gets DOM access to them.
 const APP_CSS: &str = include_str!("../assets/app.css");
-/// `web/app.ts` and the vendored Datastar, bundled (`mise run web`).
+/// `web/app.ts`, bundled (`mise run web`). It imports Datastar as `datastar`,
+/// which the bundle leaves to the page.
 const APP_JS: &str = include_str!("../assets/app.js");
+
+/// app.js as served: its `datastar` import names the address of
+/// askama_datastar's copy, so the page runs the one Datastar the crate pins.
+static APP_JS_BODY: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    APP_JS.replace(
+        "\"datastar\"",
+        &format!(
+            "\"{}\"",
+            askama_datastar::script::url("/assets/datastar.js")
+        ),
+    )
+});
 
 async fn app_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
@@ -64,7 +77,7 @@ async fn font() -> impl IntoResponse {
 async fn app_js() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        APP_JS,
+        APP_JS_BODY.as_str(),
     )
 }
 
@@ -200,6 +213,7 @@ async fn main() -> Result<()> {
         .route("/", get(dashboard::index))
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
+        .route("/assets/datastar.js", get(askama_datastar::script::serve))
         .route("/logout", post(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
         .route("/dashboard/{mcp_id}/token", post(dashboard::set_credential))
@@ -324,12 +338,12 @@ mod tests {
         assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
     }
 
-    /// Plugin names the bundle registers, whichever quote the minifier chose.
-    fn registered_plugins() -> Vec<&'static str> {
-        let names: Vec<&str> = APP_JS
+    /// Plugin names a script registers, whichever quote the minifier chose.
+    fn plugins_in(script: &'static str) -> Vec<&'static str> {
+        let names: Vec<&str> = script
             .match_indices("name:")
             .filter_map(|(i, m)| {
-                let rest = &APP_JS[i + m.len()..];
+                let rest = &script[i + m.len()..];
                 let quote = rest
                     .chars()
                     .next()
@@ -338,7 +352,14 @@ mod tests {
                 rest.find(quote).map(|end| &rest[..end])
             })
             .collect();
-        assert!(!names.is_empty(), "found no plugin names in the bundle");
+        assert!(!names.is_empty(), "found no plugin names in the script");
+        names
+    }
+
+    /// Every plugin the page has: Datastar's own, and the app's.
+    fn registered_plugins() -> Vec<&'static str> {
+        let mut names = plugins_in(askama_datastar::script::SOURCE);
+        names.extend(plugins_in(APP_JS));
         names
     }
 
@@ -354,14 +375,18 @@ mod tests {
             "geist-mono.woff2 is not a WOFF2 font"
         );
         assert!(
-            APP_JS.contains("datastar-fetch") && registered_plugins().contains(&"copy"),
+            APP_JS.contains("datastar-fetch") && plugins_in(APP_JS).contains(&"copy"),
             "app.js is not the bundle"
+        );
+        assert!(
+            !APP_JS.contains("datastar-prop-change"),
+            "app.js bundles a Datastar of its own"
         );
     }
 
     /// An attribute naming no Datastar plugin is ignored silently (there is no
-    /// `data-on-load`, only `data-init`). Names come from the vendored bundle,
-    /// so an upgrade that renames one fails here.
+    /// `data-on-load`, only `data-init`). Names come from askama_datastar's
+    /// copy and the app's bundle, so an upgrade that renames one fails here.
     #[test]
     fn every_datastar_attribute_is_one_datastar_matches() {
         let registered = registered_plugins();
@@ -396,6 +421,19 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The page's one Datastar is the crate's: app.js imports it by the address
+    /// that copy is served at, not by a name the browser cannot resolve.
+    #[test]
+    fn app_js_imports_the_datastar_the_page_is_served() {
+        let url = askama_datastar::script::url("/assets/datastar.js");
+        assert!(
+            APP_JS.contains("\"datastar\""),
+            "the bundle no longer imports `datastar`; the rewrite in APP_JS_BODY finds nothing"
+        );
+        assert!(APP_JS_BODY.contains(&format!("\"{url}\"")));
+        assert!(!APP_JS_BODY.contains("\"datastar\""));
     }
 
     /// With eval allowed, escaping is what keeps backend-supplied strings (option

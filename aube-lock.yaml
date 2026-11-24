@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@radiosilence/theme':
-        specifier: 0.2.4
-        version: 0.2.4
+        specifier: 0.2.6
+        version: 0.2.6
       '@tailwindcss/cli':
         specifier: 4.3.3
         version: 4.3.3
@@ -383,8 +383,8 @@ packages:
     resolution: {integrity: sha512-dfUnCxiN9H4ap84DvD2ubjw+3vUNpstxa0TneY/Paat8a3R4uQZDLSvWjmznAY/DoahqTHl9V46HF/Zs3F29pg==}
     engines: {node: '>= 10.0.0'}
 
-  '@radiosilence/theme@0.2.4':
-    resolution: {gitHosted: true, integrity: sha512-1NyWd4nJ0qiTFizQNG1CXhMk1XJ4cIphAZzpBJT45Mt9FTV2WXMf7LjbFZK/IFHGqc4vvOBqlOpwuGDMhRuYLA==, tarball: https://npm.pkg.github.com/download/@radiosilence/theme/0.2.4/6fdc3b6143ae5fcf7f5c69ca7fc9c99a8d45ebc4}
+  '@radiosilence/theme@0.2.6':
+    resolution: {gitHosted: true, integrity: sha512-rGTBETYn2NPao8/iKY8tcjq5FXCF1+URxDl7IGG8bQ1UpB6WALtE3EBwHd0ld0BYjIZuWOGmSHlpvDZUrIaArA==, tarball: https://npm.pkg.github.com/download/@radiosilence/theme/0.2.6/2b6fca6939cc2ade46553216178175f2b5fa4e2c}
     hasBin: true
 
   '@rolldown/binding-android-arm-eabi@1.2.16':
@@ -1082,7 +1082,7 @@ snapshots:
       '@parcel/watcher-win32-ia32': 2.5.1
       '@parcel/watcher-win32-x64': 2.5.1
 
-  '@radiosilence/theme@0.2.4': {}
+  '@radiosilence/theme@0.2.6': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.16':
     optional: true

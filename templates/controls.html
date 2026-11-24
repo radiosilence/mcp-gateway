@@ -3,10 +3,9 @@
 {#- A non-empty `load_url` makes the status fetch its own replacement. -#}
 {% macro status(id, tone, label, load_url) %}<span id="{{ id }}"{% if !load_url.is_empty() %} data-url="{{ load_url }}" data-init="@get(el.dataset.url)" aria-busy="true"{% endif %} class="status {{ tone }}">{{ label }}</span>{% endmacro %}
 
-{#- The summary names Claude's products, so it keeps their case. -#}
 {% macro copy_row(summary, intro, value) %}
 <details class="disclosure">
-  <summary class="py-2 text-control normal-case">{{ summary }}</summary>
+  <summary class="py-2 text-control">{{ summary }}</summary>
   <div class="pb-3 pl-[1em]">
     <p class="my-1 text-fine text-muted">{{ intro }}</p>
     <div class="flex items-stretch gap-2">

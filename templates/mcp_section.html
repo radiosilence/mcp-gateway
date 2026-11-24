@@ -15,8 +15,8 @@
     Add it to Claude:
   </p>
   <div class="mt-3">
-    {% call ui::copy_row("Add to Claude (Desktop / web / mobile)", "Settings → Connectors → Add custom connector, paste this URL, and sign in when prompted:", m.connector_url) %}{% endcall %}
-    {% call ui::copy_row("Add to Claude Code", "Adds it user-scoped; Claude Code handles the sign-in on first use:", m.claude_code_cmd) %}{% endcall %}
+    {% call ui::copy_row("add to Claude (desktop / web / mobile)", "Settings → Connectors → Add custom connector, paste this URL, and sign in when prompted:", m.connector_url) %}{% endcall %}
+    {% call ui::copy_row("add to Claude Code", "Adds it user-scoped; Claude Code handles the sign-in on first use:", m.claude_code_cmd) %}{% endcall %}
   </div>
 
   {% if m.has_settings %}
@@ -39,7 +39,7 @@
   <p class="mt-6 mb-0 text-meta text-muted">No credentials to enter, nothing stored.</p>
   {% else %}
   <details class="disclosure mt-6">
-    <summary class="text-control text-muted hover:text-ink">Edit credentials</summary>
+    <summary class="text-control text-muted hover:text-ink">edit credentials</summary>
     {% call ui::credential_form(m) %}{% endcall %}
   </details>
 

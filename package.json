@@ -8,7 +8,7 @@
     "fmt": "oxfmt web/app.ts web/datastar.d.ts rolldown.config.ts"
   },
   "devDependencies": {
-    "@radiosilence/theme": "0.2.3",
+    "@radiosilence/theme": "0.2.4",
     "@tailwindcss/cli": "4.3.3",
     "oxfmt": "0.75.0",
     "oxlint": "1.90.0",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.0
+
+### Changed
+
+- **Lighter panels and a filled primary.** Panels are the kit's lighter ground rather than hairline boxes, and the primary action is filled with the accent.
+
 ## 0.16.0
 
 ### Changed

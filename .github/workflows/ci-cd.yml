@@ -141,7 +141,7 @@ jobs:
             touches '^src/|^templates/|^assets/|^migrations/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^\.github/' || rust=false
             # The committed bundle and stylesheet: their sources, the
             # templates Tailwind reads class names from, and the toolchain.
-            touches '^web/|^templates/|^src/|^assets/|^package\.json$|^aube-lock\.yaml$|^\.npmrc$|^tsconfig\.json$|^rolldown\.config\.ts$|^mise\.toml$|^\.github/' || web=false
+            touches '^web/|^templates/|^assets/|^package\.json$|^aube-lock\.yaml$|^\.npmrc$|^tsconfig\.json$|^rolldown\.config\.ts$|^mise\.toml$|^\.github/' || web=false
             touches '^deploy/pulumi/|^\.github/' || package=false
             # The image is the static binaries in a scratch layer. The Rust
             # jobs already check the code, so a pull request builds them and

@@ -13,3 +13,9 @@
     --brand: #066f82;
   }
 }
+
+/* Stored, but the backend could not say whether it works: not `ok`, which would claim it does, and not `wait`, which
+ * reads as still checking once reduced motion stills the pulse. */
+.status.unknown {
+  --tone: var(--ink);
+}

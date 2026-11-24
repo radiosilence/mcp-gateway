@@ -23,7 +23,7 @@
   <div class="mt-4 grid gap-4">
     {% for f in m.fields %}{% if !f.options_url.is_empty() %}
     <label class="field">
-      <span>{{ f.label }}</span>
+      <span class="normal-case">{{ f.label }}</span>
       <select id="options-{{ m.id }}-{{ f.id }}" data-url="{{ f.options_url }}" data-init="@get(el.dataset.url)"
               aria-busy="true" aria-label="Loading {{ f.label }}" tabindex="-1"
               class="skeleton pointer-events-none">

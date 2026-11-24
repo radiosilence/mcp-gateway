@@ -11,5 +11,5 @@
 {% call ui::status(m.status_id(), "ok", "Connected", "") %}{% endcall %}
 {%- else %}
 {#- Stored, or no_auth, but the backend could not say whether it works. -#}
-{% call ui::status(m.status_id(), "", m.unknown_label(), "") %}{% endcall %}
+{% call ui::status(m.status_id(), "unknown", m.unknown_label(), "") %}{% endcall %}
 {%- endif %}

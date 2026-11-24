@@ -107,11 +107,10 @@ The look comes from the kōan web kit,
 [`@radiosilence/theme`](https://github.com/radiosilence/theme), which koan,
 slsk-mcp and jaritanet's auth pages share. Plain elements already come out in
 it, and its classes (`panel`, `field`, `status`, `code`, the button weights)
-draw the rest, so `web/app.css` holds only the gateway's cyan accent and the
-templates add layout alone. The kit removes Tailwind's palette, radii, shadows
+draw the rest, so `web/app.css` holds only the gateway's cyan accent and a
+tone for a status the backend could not confirm, and the templates add layout. The kit removes Tailwind's palette, radii, shadows
 and type sizes, so a class such as `rounded-lg` or `text-sm` compiles to
-nothing; kit-check reports any that remain, in the templates and in Rust that
-writes markup, and fails CI. A deliberate exception carries `kit: raw` and its
+nothing; kit-check reports any that remain in the templates, and fails CI. A deliberate exception carries `kit: raw` and its
 reason. The package is on GitHub Packages, which needs a token to install: run
 `mise run auth` once to write it from your `gh` login.
 

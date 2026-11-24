@@ -1,11 +1,12 @@
-{% macro field_status(id, text, bad) %}<small id="{{ id }}"{% if bad %} class="bad"{% endif %}>{{ text }}</small>{% endmacro %}
+{% macro field_status(id, text, bad) %}<small id="{{ id }}" class="empty:hidden{% if bad %} bad{% endif %}">{{ text }}</small>{% endmacro %}
 
 {#- A non-empty `load_url` makes the status fetch its own replacement. -#}
 {% macro status(id, tone, label, load_url) %}<span id="{{ id }}"{% if !load_url.is_empty() %} data-url="{{ load_url }}" data-init="@get(el.dataset.url)" aria-busy="true"{% endif %} class="status {{ tone }}">{{ label }}</span>{% endmacro %}
 
+{#- The summary names Claude's products, so it keeps their case. -#}
 {% macro copy_row(summary, intro, value) %}
 <details class="disclosure">
-  <summary class="py-2 text-control">{{ summary }}</summary>
+  <summary class="py-2 text-control normal-case">{{ summary }}</summary>
   <div class="pb-3 pl-[1em]">
     <p class="my-1 text-fine text-muted">{{ intro }}</p>
     <div class="flex items-stretch gap-2">
@@ -26,9 +27,10 @@
       data-on:submit="@post(el.getAttribute('action'), {contentType: 'form'})"
       class="mt-3 grid gap-4">
   {% if m.has_stored_secret %}<p class="my-0 text-fine text-muted">Leave a password blank to keep the stored one.</p>{% endif %}
+  {#- Labels are the registry's, so they keep their case. -#}
   {% for f in m.fields %}{% if !f.from_backend %}
   <label class="field">
-    <span>{{ f.label }}{% if !f.required %} <span class="text-muted">(optional)</span>{% endif %}{% if f.secret && f.is_set %} <span class="text-brand">· set</span>{% endif %}</span>
+    <span class="normal-case">{{ f.label }}{% if !f.required %} <span class="text-muted">(optional)</span>{% endif %}{% if f.secret && f.is_set %} <span class="text-brand">· set</span>{% endif %}</span>
     <input type="{{ f.input_type }}" name="{{ f.id }}" placeholder="{{ f.placeholder }}"
            value="{{ f.value }}" autocomplete="{{ f.autocomplete }}" {% if f.required && !(f.secret && f.is_set) %}required{% endif %} />
   </label>

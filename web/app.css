@@ -1,4 +1,5 @@
 @import "tailwindcss" source(none);
+@source "../templates";
 @import "@radiosilence/theme";
 
 /* The accent is cyan, the gateway's own among the apps on this theme: #4fd6f0 on dark, and #066f82, the same hue
@@ -13,34 +14,8 @@
   }
 }
 
-@source "../templates";
-
-@utility muted {
-  @apply text-muted;
-}
-
-@utility warn {
-  @apply text-warn;
-}
-
-@utility card {
-  @apply rounded-2xl bg-surface ring-1 ring-rule;
-}
-
-@utility code-box {
-  @apply rounded-md bg-bg px-3 py-2 font-mono text-xs ring-1 ring-rule ring-inset;
-}
-
-@layer base {
-  body {
-    @apply bg-bg text-ink;
-  }
-
-  a {
-    @apply text-brand hover:underline;
-  }
-
-  button:not(:disabled) {
-    cursor: pointer;
-  }
+/* Stored, but the backend could not say whether it works: not `ok`, which would claim it does, and not `wait`, which
+ * reads as still checking once reduced motion stills the pulse. */
+.status.unknown {
+  --tone: var(--ink);
 }

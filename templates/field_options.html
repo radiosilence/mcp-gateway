@@ -1,10 +1,9 @@
-{% import "controls.html" as ui %}
 {#- Replaces the skeleton, so it carries the control and its id. A form so the
     change posts one named field rather than every signal on the page. -#}
 <form id="options-{{ mcp_id }}-{{ field_id }}" method="post" action="/dashboard/{{ mcp_id }}/field/{{ field_id }}"
       data-on:change="@patch(el.getAttribute('action'), {contentType: 'form'})">
-  <select name="value" class="{% call ui::field_control() %}{% endcall %}">
-    <option value="">{% if let Some(d) = account_default %}Account default ({{ d }}){% else %}Account default{% endif %}</option>
+  <select name="value">
+    <option value="">{% if let Some(d) = account_default %}account default ({{ d }}){% else %}account default{% endif %}</option>
 {%- for o in options %}
     <option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}{% if o.is_default %} — account default{% endif %}</option>
 {%- endfor %}

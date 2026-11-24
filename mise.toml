@@ -40,8 +40,8 @@ description = "Rebuild assets/ after changing web/ or a template"
 run = "aube install --frozen-lockfile && rolldown -c && tailwindcss -i web/app.css -o assets/app.css --minify && cp node_modules/@radiosilence/theme/geist-mono.woff2 assets/"
 
 [tasks.web-check]
-description = "Typecheck, lint and format-check web/"
-run = "aube install --frozen-lockfile && tsc && oxlint web && oxfmt --check web/app.ts web/datastar.d.ts rolldown.config.ts"
+description = "Typecheck, lint and format-check web/, and hold the templates to the kit"
+run = "aube install --frozen-lockfile && tsc && oxlint web && oxfmt --check web/app.ts web/datastar.d.ts rolldown.config.ts && kit-check templates web"
 
 [tasks.up]
 description = "Run the stack locally on http://localhost:8080"

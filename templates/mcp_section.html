@@ -1,31 +1,32 @@
 {% import "controls.html" as ui %}
-<section id="mcp-{{ m.id }}" class="card mt-6 p-6 shadow-xs">
+<section id="mcp-{{ m.id }}" class="panel mt-6">
   {%- if !m.notice.text.is_empty() %}
-  <p class="mb-3 text-xs {% if m.notice.bad %}warn{% else %}text-brand{% endif %}">{{ m.notice.text }}</p>
+  <p class="notice{% if m.notice.bad %} bad{% endif %} mt-0">{{ m.notice.text }}</p>
   {%- endif %}
-  <div class="flex items-center justify-between">
-    <h2 class="text-base font-semibold">{{ m.name }}</h2>
+  <div class="flex items-center justify-between gap-4">
+    {#- The name is the registry's, so it keeps its case. -#}
+    <h2 class="my-0 normal-case">{{ m.name }}</h2>
     {% include "mcp_badge.html" %}
   </div>
 
   {% if m.has_credential %}
-  <p class="muted mt-1.5 text-xs">
+  <p class="mt-2 mb-0 text-meta text-muted">
     {% if m.no_auth %}No credentials needed.{% else %}Credentials set · updated <time datetime="{{ m.updated_at }}" title="{{ m.updated_at }}">{{ m.updated_ago }}</time>.{% endif %}
     Add it to Claude:
   </p>
-  <div class="mt-4 space-y-2">
-    {% call ui::copy_row("Add to Claude (Desktop / web / mobile)", "Settings → Connectors → Add custom connector, paste this URL, and sign in when prompted:", m.connector_url) %}{% endcall %}
-    {% call ui::copy_row("Add to Claude Code", "Adds it user-scoped; Claude Code handles the sign-in on first use:", m.claude_code_cmd) %}{% endcall %}
+  <div class="mt-3">
+    {% call ui::copy_row("add to Claude (desktop / web / mobile)", "Settings → Connectors → Add custom connector, paste this URL, and sign in when prompted:", m.connector_url) %}{% endcall %}
+    {% call ui::copy_row("add to Claude Code", "Adds it user-scoped; Claude Code handles the sign-in on first use:", m.claude_code_cmd) %}{% endcall %}
   </div>
 
   {% if m.has_settings %}
-  <div class="mt-4 space-y-3">
+  <div class="mt-4 grid gap-4">
     {% for f in m.fields %}{% if !f.options_url.is_empty() %}
-    <label class="block">
-      <span class="muted text-xs">{{ f.label }}</span>
+    <label class="field">
+      <span class="normal-case">{{ f.label }}</span>
       <select id="options-{{ m.id }}-{{ f.id }}" data-url="{{ f.options_url }}" data-init="@get(el.dataset.url)"
               aria-busy="true" aria-label="Loading {{ f.label }}" tabindex="-1"
-              class="{% call ui::field_skeleton() %}{% endcall %}">
+              class="skeleton pointer-events-none">
         <option>&nbsp;</option>
       </select>
       {% call ui::field_status("field-status-{}-{}"|format(m.id, f.id), "", false) %}{% endcall %}
@@ -35,24 +36,24 @@
   {% endif %}
 
   {% if m.no_auth %}
-  <p class="muted mt-6 text-xs">No credentials to enter, nothing stored.</p>
+  <p class="mt-6 mb-0 text-meta text-muted">No credentials to enter, nothing stored.</p>
   {% else %}
-  <details class="mt-6 text-xs">
-    <summary class="muted cursor-pointer select-none hover:text-strong">Edit credentials</summary>
+  <details class="disclosure mt-6">
+    <summary class="text-control text-muted hover:text-ink">edit credentials</summary>
     {% call ui::credential_form(m) %}{% endcall %}
   </details>
 
   <form method="post" action="/dashboard/{{ m.id }}/delete"
         data-confirm="Disconnect {{ m.name }}? This wipes your stored credentials."
         data-on:submit="confirm(el.dataset.confirm) && @post(el.getAttribute('action'))"
-        class="mt-3">
-    <button class="rounded-lg px-3 py-2 text-xs font-medium text-bad ring-1 ring-bad/40 ring-inset hover:bg-bad/10">Disconnect</button>
+        class="mt-4">
+    <button class="bad">Disconnect</button>
   </form>
   {% endif %}
 
   {% else %}
   {% if !m.key_help_url.is_empty() %}
-  <p class="muted mt-1.5 text-xs">Get credentials: <a href="{{ m.key_help_url }}" target="_blank" rel="noreferrer">{{ m.key_help_url }}</a></p>
+  <p class="mt-2 mb-0 text-meta text-muted">Get credentials: <a href="{{ m.key_help_url }}" target="_blank" rel="noreferrer">{{ m.key_help_url }}</a></p>
   {% endif %}
   {% call ui::credential_form(m) %}{% endcall %}
   {% endif %}

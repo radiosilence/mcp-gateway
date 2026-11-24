@@ -325,7 +325,10 @@ mod tests {
             .split('>')
             .next()
             .expect("a closing bracket");
-        let attr = &tag[tag.find("class=\"").expect("a class attribute") + 7..];
+        let Some(start) = tag.find("class=\"") else {
+            return Default::default();
+        };
+        let attr = &tag[start + 7..];
         attr[..attr.find('"').expect("a closing quote")]
             .split_whitespace()
             .map(str::to_string)
@@ -407,16 +410,8 @@ mod tests {
 
         let only_skeleton: Vec<_> = skeleton.difference(&loaded).cloned().collect();
         let only_loaded: Vec<_> = loaded.difference(&skeleton).cloned().collect();
-        assert_eq!(
-            only_skeleton,
-            [
-                "animate-pulse",
-                "bg-rule",
-                "pointer-events-none",
-                "text-transparent",
-            ]
-        );
-        assert_eq!(only_loaded, ["bg-bg", "focus:ring-2", "focus:ring-brand",]);
+        assert_eq!(only_skeleton, ["pointer-events-none", "skeleton"]);
+        assert!(only_loaded.is_empty(), "{only_loaded:?}");
     }
 
     /// Both pages, since the login page is the one in front of you when the

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.0
+
+### Changed
+
+- **The accent is cyan.** The web UI's accent is the gateway's own cyan instead of the shared theme's green, which koan keeps.
+
 ## 0.14.2
 
 ### Changed

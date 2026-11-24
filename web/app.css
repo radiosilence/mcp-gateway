@@ -1,5 +1,18 @@
 @import "tailwindcss" source(none);
 @import "@radiosilence/theme";
+
+/* The accent is cyan, the gateway's own among the apps on this theme: #4fd6f0 on dark, and #066f82, the same hue
+ * darkened, on light. Both are over 4.5:1 on --surface. */
+:root {
+  --brand: #4fd6f0;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --brand: #066f82;
+  }
+}
+
 @source "../templates";
 
 @utility muted {

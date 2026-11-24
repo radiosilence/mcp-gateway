@@ -1,0 +1,1 @@
+- **The accent is cyan.** The web UI's accent is the gateway's own cyan instead of the shared theme's green, which koan keeps.

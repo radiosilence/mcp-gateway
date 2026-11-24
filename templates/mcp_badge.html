@@ -1,15 +1,15 @@
 {% import "controls.html" as ui %}
-{#- A non-empty `status_url` renders a pending badge that fetches its
+{#- A non-empty `status_url` renders a pending status that fetches its
     replacement; the answer comes back with the URL cleared. -#}
 {%- if !m.status_url.is_empty() %}
-{% call ui::badge(m.status_id(), "bg-rule text-muted ring-rule animate-pulse", "bg-muted", "Checking…", m.status_url) %}{% endcall %}
+{% call ui::status(m.status_id(), "wait busy", "Checking…", m.status_url) %}{% endcall %}
 {%- else if !m.has_credential %}
-{% call ui::badge(m.status_id(), "bg-warn/15 text-warn ring-warn/30", "bg-warn", "Not configured", "") %}{% endcall %}
+{% call ui::status(m.status_id(), "warn", "Not configured", "") %}{% endcall %}
 {%- else if m.rejected %}
-{% call ui::badge(m.status_id(), "bg-bad/15 text-bad ring-bad/30", "bg-bad", m.rejected_label(), "") %}{% endcall %}
+{% call ui::status(m.status_id(), "bad", m.rejected_label(), "") %}{% endcall %}
 {%- else if m.verified %}
-{% call ui::badge(m.status_id(), "bg-brand/15 text-brand ring-brand/30", "bg-brand", "Connected", "") %}{% endcall %}
+{% call ui::status(m.status_id(), "ok", "Connected", "") %}{% endcall %}
 {%- else %}
 {#- Stored, or no_auth, but the backend could not say whether it works. -#}
-{% call ui::badge(m.status_id(), "bg-rule text-ink ring-rule", "bg-muted", m.unknown_label(), "") %}{% endcall %}
+{% call ui::status(m.status_id(), "", m.unknown_label(), "") %}{% endcall %}
 {%- endif %}

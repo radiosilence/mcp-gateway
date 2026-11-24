@@ -100,15 +100,20 @@ The page loads nothing from the internet: the stylesheet, script and font are
 embedded in the binary. They are built from `web/` (TypeScript bundled by
 rolldown, and Tailwind v4 reading class names from the templates) and committed, so a cargo build needs no node toolchain. **After
 changing `web/` or a template, run `mise run web`** and commit the result; CI
-rebuilds them and fails if they differ. `mise run web-check` typechecks, lints
-and format-checks.
+rebuilds them and fails if they differ. `mise run web-check` typechecks, lints,
+format-checks and runs the theme's kit-check.
 
-The colours, type scale and typeface come from
+The look comes from the kōan web kit,
 [`@radiosilence/theme`](https://github.com/radiosilence/theme), which koan,
-slsk-mcp and jaritanet's auth pages share, so the templates use its tokens
-(`bg-surface`, `text-brand`, `ring-rule`, …) rather than Tailwind's palette. It is
-on GitHub Packages, which needs a token to install: run `mise run auth` once to
-write it from your `gh` login.
+slsk-mcp and jaritanet's auth pages share. Plain elements already come out in
+it, and its classes (`panel`, `field`, `status`, `code`, the button weights)
+draw the rest, so `web/app.css` holds only the gateway's cyan accent and the
+templates add layout alone. The kit removes Tailwind's palette, radii, shadows
+and type sizes, so a class such as `rounded-lg` or `text-sm` compiles to
+nothing; kit-check reports any that remain, in the templates and in Rust that
+writes markup, and fails CI. A deliberate exception carries `kit: raw` and its
+reason. The package is on GitHub Packages, which needs a token to install: run
+`mise run auth` once to write it from your `gh` login.
 
 ### Testing the Claude connector (Cloudflare tunnel)
 

@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@radiosilence/theme':
-        specifier: 0.1.0
-        version: 0.1.0
+        specifier: 0.2.0
+        version: 0.2.0
       '@tailwindcss/cli':
         specifier: 4.3.3
         version: 4.3.3
@@ -383,8 +383,9 @@ packages:
     resolution: {integrity: sha512-dfUnCxiN9H4ap84DvD2ubjw+3vUNpstxa0TneY/Paat8a3R4uQZDLSvWjmznAY/DoahqTHl9V46HF/Zs3F29pg==}
     engines: {node: '>= 10.0.0'}
 
-  '@radiosilence/theme@0.1.0':
-    resolution: {gitHosted: true, integrity: sha512-bK064SfFlL0kx/sWtz8md/IEE3AdmR3hXhYnkFmDwJJ8mGZUQLSHsD2aMF2xjjDHpaSmi3mZOMHcPMGUXXmD+g==, tarball: https://npm.pkg.github.com/download/@radiosilence/theme/0.1.0/e5099485f3ccf8c00160da41291e31e7735b4e8c}
+  '@radiosilence/theme@0.2.0':
+    resolution: {gitHosted: true, integrity: sha512-PMDHJsYjOLc7k37ZbKkN633bSEqzLWXCvNY4u20iqKJmnlzMDSt9km3PBiKqo7yzYBUEvMXBzPEX89U9RzQvag==, tarball: https://npm.pkg.github.com/download/@radiosilence/theme/0.2.0/9766568ceae7b8d3b53b7dea58571f7a25f8f233}
+    hasBin: true
 
   '@rolldown/binding-android-arm-eabi@1.2.16':
     resolution: {integrity: sha512-ia3DwAs0OsMGS7+IConptSiyk9pEXkOx/AbJ2n/lAGxH3QkWQus1t8d7gnAT38FCU2sQu8lUbeR6AiZFv4JxaA==}
@@ -1081,7 +1082,7 @@ snapshots:
       '@parcel/watcher-win32-ia32': 2.5.1
       '@parcel/watcher-win32-x64': 2.5.1
 
-  '@radiosilence/theme@0.1.0': {}
+  '@radiosilence/theme@0.2.0': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.16':
     optional: true

@@ -19,3 +19,11 @@
 .status.unknown {
   --tone: var(--ink);
 }
+
+/* The prominent action is filled: the sign-in button and each server's connect stand out from the bordered controls
+ * around them. */
+@layer components {
+  .primary {
+    @apply border-transparent bg-brand text-bg hover:bg-brand hover:opacity-90 active:opacity-80;
+  }
+}

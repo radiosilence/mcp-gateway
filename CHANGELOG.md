@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.0
+
+### Changed
+
+- **Connect is the filled primary.** Each server's Connect or Save is the filled primary action, from the kit.
+
 ## 0.17.0
 
 ### Changed

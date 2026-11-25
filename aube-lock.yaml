@@ -8,9 +8,9 @@ importers:
 
   .:
     devDependencies:
-      '@radiosilence/theme':
-        specifier: 0.2.8
-        version: 0.2.8
+      '@radiosilence/koan-kit-web':
+        specifier: 0.3.0
+        version: 0.3.0
       '@tailwindcss/cli':
         specifier: 4.3.3
         version: 4.3.3
@@ -383,8 +383,8 @@ packages:
     resolution: {integrity: sha512-dfUnCxiN9H4ap84DvD2ubjw+3vUNpstxa0TneY/Paat8a3R4uQZDLSvWjmznAY/DoahqTHl9V46HF/Zs3F29pg==}
     engines: {node: '>= 10.0.0'}
 
-  '@radiosilence/theme@0.2.8':
-    resolution: {gitHosted: true, integrity: sha512-Eb5KmAlONc4zjkXX1uc0yFo6yKRAlqfG99F+6Fx16u8UjsIy07VLFnTCQXnsQckf3PHFm2BMrWx6bHvEyO0BNw==, tarball: https://npm.pkg.github.com/download/@radiosilence/theme/0.2.8/4605cd140e05f52b2b252071a31c2fcad8941b45}
+  '@radiosilence/koan-kit-web@0.3.0':
+    resolution: {gitHosted: true, integrity: sha512-rR/TayBRR/YE/n02qOkS2rWmAIdxqdnSvHRDwck68jF/7vOLiMzpiPN5mRaytCQqc+BjcSszAk8pTDGCUOZbKw==, tarball: https://npm.pkg.github.com/download/@radiosilence/koan-kit-web/0.3.0/fb72b5ed519fdeeda4351d766d008ed6f9c7cf09}
     hasBin: true
 
   '@rolldown/binding-android-arm-eabi@1.2.16':
@@ -1082,7 +1082,7 @@ snapshots:
       '@parcel/watcher-win32-ia32': 2.5.1
       '@parcel/watcher-win32-x64': 2.5.1
 
-  '@radiosilence/theme@0.2.8': {}
+  '@radiosilence/koan-kit-web@0.3.0': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.16':
     optional: true

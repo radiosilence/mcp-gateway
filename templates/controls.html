@@ -34,6 +34,6 @@
            value="{{ f.value }}" autocomplete="{{ f.autocomplete }}" {% if f.required && !(f.secret && f.is_set) %}required{% endif %} />
   </label>
   {% endif %}{% endfor %}
-  <div><button type="submit">{% if m.has_credential %}Save{% else %}Connect{% endif %}</button></div>
+  <div><button type="submit" class="primary">{% if m.has_credential %}Save{% else %}Connect{% endif %}</button></div>
 </form>
 {% endmacro %}

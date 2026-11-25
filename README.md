@@ -104,7 +104,7 @@ rebuilds them and fails if they differ. `mise run web-check` typechecks, lints,
 format-checks and runs the theme's kit-check.
 
 The look comes from the kōan web kit,
-[`@radiosilence/theme`](https://github.com/radiosilence/theme), which koan,
+[`@radiosilence/koan-kit-web`](https://github.com/radiosilence/koan/tree/main/koan-kit-web), which koan,
 slsk-mcp and jaritanet's auth pages share. Plain elements already come out in
 it, and its classes (`panel`, `field`, `status`, `code`, the button weights)
 draw the rest, so `web/app.css` holds only the gateway's cyan accent and a

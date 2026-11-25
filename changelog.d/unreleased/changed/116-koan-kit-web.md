@@ -1,0 +1,1 @@
+- **The web kit is `@radiosilence/koan-kit-web`.** The same kit as `@radiosilence/theme`, renamed and now published from the koan repository; `primary` buttons are filled with the accent.

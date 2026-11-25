@@ -1,6 +1,6 @@
 @import "tailwindcss" source(none);
 @source "../templates";
-@import "@radiosilence/theme";
+@import "@radiosilence/koan-kit-web";
 
 /* The accent is cyan, the gateway's own among the apps on this theme: #4fd6f0 on dark, and #066f82, the same hue
  * darkened, on light. Both are over 4.5:1 on --surface. */

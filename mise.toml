@@ -37,7 +37,7 @@ printf '//npm.pkg.github.com/:_authToken=%s\n' "$token" > .npmrc.auth
 description = "Rebuild assets/ after changing web/ or a template"
 # The theme's @font-face resolves beside the stylesheet, so its font is copied
 # next to it.
-run = "aube install --frozen-lockfile && rolldown -c && tailwindcss -i web/app.css -o assets/app.css --minify && cp node_modules/@radiosilence/theme/geist-mono.woff2 assets/"
+run = "aube install --frozen-lockfile && rolldown -c && tailwindcss -i web/app.css -o assets/app.css --minify && cp node_modules/@radiosilence/koan-kit-web/geist-mono.woff2 assets/"
 
 [tasks.web-check]
 description = "Typecheck, lint and format-check web/, and hold the templates to the kit"

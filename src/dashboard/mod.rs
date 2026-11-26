@@ -2,10 +2,9 @@
 //! the fields it needs and the form is built from those. Mutations answer with
 //! the section they changed, which Datastar morphs into the page.
 
-use askama::Template;
 use axum::extract::{Form, Path, State};
 use axum::http::HeaderMap;
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -47,7 +46,7 @@ pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> AppResu
     if current_session(&state, &headers).await?.is_some() {
         return Ok(Redirect::to("/dashboard").into_response());
     }
-    Ok(Html(IndexTemplate.render().map_err(anyhow::Error::from)?).into_response())
+    Ok(render(IndexTemplate))
 }
 
 /// Built from the gateway's own database only. Anything that has to ask a
@@ -67,13 +66,10 @@ pub async fn dashboard(
         .iter()
         .map(|m| McpView::new(&state.config, m, stored.remove(&m.id)))
         .collect();
-    let html = DashboardTemplate {
+    Ok(render(DashboardTemplate {
         login: session.login,
         mcps,
-    }
-    .render()
-    .map_err(anyhow::Error::from)?;
-    Ok(Html(html).into_response())
+    }))
 }
 
 pub async fn set_credential(

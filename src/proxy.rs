@@ -130,6 +130,16 @@ pub async fn handle(
     for h in HOP_BY_HOP {
         resp_headers.remove(h);
     }
+    // The gateway's security headers are set only where a response lacks
+    // them, and the backend answers on the gateway's origin.
+    for h in [
+        header::CONTENT_SECURITY_POLICY,
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::X_FRAME_OPTIONS,
+        header::REFERRER_POLICY,
+    ] {
+        resp_headers.remove(h);
+    }
 
     let mut out = Response::new(Body::from_stream(upstream.bytes_stream()));
     *out.status_mut() = status;

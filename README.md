@@ -97,7 +97,9 @@ You can exercise the whole browser flow (login, set token, test connection) at
 `http://localhost:8080` directly — no HTTPS needed for a local browser.
 
 The page loads nothing from the internet: the stylesheet, script and font are
-embedded in the binary. They are built from `web/` (TypeScript bundled by
+embedded in the binary. Each is served under an address carrying a hash of its
+contents (askama_datastar's `Asset`), so a browser caches it for good and a
+new release's page fetches the new copy rather than a stale one. They are built from `web/` (TypeScript bundled by
 rolldown, and Tailwind v4 reading class names from the templates) and committed, so a cargo build needs no node toolchain. **After
 changing `web/` or a template, run `mise run web`** and commit the result; CI
 rebuilds them and fails if they differ. `mise run web-check` typechecks, lints,

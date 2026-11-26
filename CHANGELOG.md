@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.0
+
+### Changed
+
+- **The web kit is `@radiosilence/koan-kit-web`.** The same kit as `@radiosilence/theme`, renamed and now published from the koan repository; `primary` buttons are filled with the accent.
+- **askama_datastar 0.3.** The stylesheet, script and typeface are served under fingerprinted addresses and cached for good rather than revalidated, and the security headers come from the crate's `SecurityHeaders`, which sends `Referrer-Policy: same-origin` in place of `no-referrer`. A proxied backend's own security headers are dropped, so the gateway's apply to it as before. A test now checks every template escapes registry, user and backend text exactly once.
+
 ## 0.18.0
 
 ### Changed

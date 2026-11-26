@@ -258,8 +258,8 @@ impl McpView {
     }
 }
 
-/// A fragment as `text/html`, which Datastar morphs into the page by the ids of
-/// its top-level elements.
+/// A page, or a fragment as `text/html`, which Datastar morphs into the page by
+/// the ids of its top-level elements.
 pub(super) fn render<T: Template>(template: T) -> Response {
     match askama_datastar::Html::render(&template) {
         Ok(html) => html.into_response(),
@@ -535,11 +535,17 @@ mod preview {
         let css = include_str!("../../assets/app.css");
         let html = html
             .replace(
-                r#"<link rel="stylesheet" href="/assets/app.css" />"#,
+                &format!(
+                    r#"<link rel="stylesheet" href="{}" />"#,
+                    crate::assets::css_url()
+                ),
                 &format!("<style>{css}</style>"),
             )
             .replace(
-                r#"<script type="module" src="/assets/app.js"></script>"#,
+                &format!(
+                    r#"<script type="module" src="{}"></script>"#,
+                    crate::assets::js_url()
+                ),
                 "",
             );
         // Without Datastar the pending states stay on screen.

@@ -5,6 +5,7 @@
 //! encrypted, serves a dashboard to manage them, and proxies to each backend
 //! MCP with the right values injected per request.
 
+mod assets;
 mod auth;
 mod backend;
 mod config;
@@ -22,10 +23,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use askama_datastar::{Csp, SecurityHeaders};
 use axum::Router;
-use axum::http::{HeaderValue, header};
-use axum::middleware;
-use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, patch, post};
 use tower_governor::GovernorLayer;
 use tower_governor::governor::GovernorConfigBuilder;
@@ -43,79 +42,15 @@ use crate::store::Store;
 /// Shown in each page's footer; the same string as the image tag and release.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Embedded rather than loaded from a CDN: credentials are typed into these
-/// pages, so no third-party script gets DOM access to them.
-const APP_CSS: &str = include_str!("../assets/app.css");
-/// `web/app.ts`, bundled (`mise run web`). It imports Datastar as `datastar`,
-/// which the bundle leaves to the page.
-const APP_JS: &str = include_str!("../assets/app.js");
-
-/// app.js as served: its `datastar` import names the address of
-/// askama_datastar's copy, so the page runs the one Datastar the crate pins.
-static APP_JS_BODY: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    APP_JS.replace(
-        "\"datastar\"",
-        &format!(
-            "\"{}\"",
-            askama_datastar::script::url("/assets/datastar.js")
-        ),
-    )
-});
-
-async fn app_css() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
-}
-
-/// The theme's typeface, which its `@font-face` loads from beside the
-/// stylesheet.
-const FONT: &[u8] = include_bytes!("../assets/geist-mono.woff2");
-
-async fn font() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "font/woff2")], FONT)
-}
-
-async fn app_js() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        APP_JS_BODY.as_str(),
-    )
-}
-
 /// Everything comes from this origin and nothing is inline; `data:` covers the
 /// SVG favicon.
 ///
 /// `unsafe-eval` is required by Datastar, which compiles each `data-*`
 /// expression with `Function()`. It means a `data-*` attribute rendered from an
-/// unescaped value would execute, so escaping is the control:
-/// `no_template_opts_out_of_escaping` guards it.
-const CSP: &str = "default-src 'self'; \
-     script-src 'self' 'unsafe-eval'; \
-     style-src 'self'; \
-     img-src 'self' data:; \
-     connect-src 'self'; \
-     form-action 'self'; \
-     frame-ancestors 'none'; \
-     base-uri 'none'; \
-     object-src 'none'";
-
-/// Applied to every response, including the proxy's, which they do not affect.
-async fn security_headers(request: axum::extract::Request, next: middleware::Next) -> Response {
-    let mut response = next.run(request).await;
-    let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(CSP),
-    );
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    headers.insert(
-        header::REFERRER_POLICY,
-        HeaderValue::from_static("no-referrer"),
-    );
-    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
-    response
+/// unescaped value would execute, so escaping is the control, which the
+/// escaping guard in `dashboard::view`'s tests checks.
+fn csp() -> Csp {
+    Csp::new().datastar()
 }
 
 #[tokio::main]
@@ -211,9 +146,6 @@ async fn main() -> Result<()> {
     // predicate leaves `text/event-stream` alone, since an encoder buffers.
     let dashboard_routes = Router::new()
         .route("/", get(dashboard::index))
-        .route("/assets/app.css", get(app_css))
-        .route("/assets/app.js", get(app_js))
-        .route("/assets/datastar.js", get(askama_datastar::script::serve))
         .route("/logout", post(auth::routes::logout))
         .route("/dashboard", get(dashboard::dashboard))
         .route("/dashboard/{mcp_id}/token", post(dashboard::set_credential))
@@ -230,13 +162,13 @@ async fn main() -> Result<()> {
             "/dashboard/{mcp_id}/delete",
             post(dashboard::delete_credential),
         )
+        .merge(assets::routes())
         .layer(CompressionLayer::new());
 
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .merge(dashboard_routes)
-        // WOFF2 is already compressed, so the font sits outside that layer.
-        .route("/assets/geist-mono.woff2", get(font))
+        .merge(assets::font())
         .route(
             "/.well-known/oauth-protected-resource",
             get(well_known::protected_resource),
@@ -248,7 +180,9 @@ async fn main() -> Result<()> {
         // MCPs live at the root; config rejects ids that shadow routes above.
         .route("/{id}", any(proxy::handle))
         .merge(auth_routes)
-        .layer(middleware::from_fn(security_headers))
+        // Applied to every response, the proxy's included: `proxy` drops a
+        // backend's own security headers so these stand.
+        .layer(SecurityHeaders::new(&csp()))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -309,12 +243,12 @@ mod tests {
     #[tokio::test]
     async fn every_response_carries_the_security_headers() {
         use axum::body::Body;
-        use axum::http::Request;
+        use axum::http::{Request, header};
         use tower::ServiceExt;
 
-        let app = Router::new()
+        let app: Router = Router::new()
             .route("/", get(|| async { "hi" }))
-            .layer(middleware::from_fn(security_headers));
+            .layer(SecurityHeaders::new(&csp()));
 
         let response = app
             .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
@@ -335,109 +269,11 @@ mod tests {
         );
         assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
         assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
-        assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
-    }
-
-    /// Plugin names a script registers, whichever quote the minifier chose.
-    fn plugins_in(script: &'static str) -> Vec<&'static str> {
-        let names: Vec<&str> = script
-            .match_indices("name:")
-            .filter_map(|(i, m)| {
-                let rest = &script[i + m.len()..];
-                let quote = rest
-                    .chars()
-                    .next()
-                    .filter(|c| matches!(c, '"' | '\'' | '`'))?;
-                let rest = &rest[1..];
-                rest.find(quote).map(|end| &rest[..end])
-            })
-            .collect();
-        assert!(!names.is_empty(), "found no plugin names in the script");
-        names
-    }
-
-    /// Every plugin the page has: Datastar's own, and the app's.
-    fn registered_plugins() -> Vec<&'static str> {
-        let mut names = plugins_in(askama_datastar::script::SOURCE);
-        names.extend(plugins_in(APP_JS));
-        names
-    }
-
-    /// The generated assets are committed; a truncated build would still
-    /// compile and only show up as a broken page.
-    #[test]
-    fn the_embedded_assets_are_real() {
-        assert!(APP_CSS.contains("box-sizing:border-box"), "no preflight");
-        assert!(APP_CSS.contains("max-w-2xl"), "utilities missing");
-        assert!(APP_CSS.contains("Geist Mono"), "the theme is missing");
-        assert!(
-            FONT.starts_with(b"wOF2"),
-            "geist-mono.woff2 is not a WOFF2 font"
-        );
-        assert!(
-            APP_JS.contains("datastar-fetch") && plugins_in(APP_JS).contains(&"copy"),
-            "app.js is not the bundle"
-        );
-        assert!(
-            !APP_JS.contains("datastar-prop-change"),
-            "app.js bundles a Datastar of its own"
-        );
-    }
-
-    /// An attribute naming no Datastar plugin is ignored silently (there is no
-    /// `data-on-load`, only `data-init`). Names come from askama_datastar's
-    /// copy and the app's bundle, so an upgrade that renames one fails here.
-    #[test]
-    fn every_datastar_attribute_is_one_datastar_matches() {
-        let registered = registered_plugins();
-        assert!(
-            registered.contains(&"init") && registered.contains(&"on"),
-            "the bundle registers neither `init` nor `on`; the scan is wrong, not the templates"
-        );
-
-        // Read by expressions; Datastar ignores them.
-        const OURS: &[&str] = &["confirm", "url"];
-
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-        for entry in std::fs::read_dir(&dir).expect("templates/") {
-            let path = entry.expect("entry").path();
-            let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            let body = std::fs::read_to_string(&path).expect("readable");
-            for chunk in body.split(" data-").skip(1) {
-                let attr: String = chunk
-                    .chars()
-                    .take_while(|c| !matches!(c, '=' | ' ' | '"' | '>' | '\n'))
-                    .collect();
-                // `data-on:submit__prevent` names the `on` plugin; the key and
-                // the modifiers are its arguments.
-                let plugin = attr
-                    .split(&[':', '_'][..])
-                    .next()
-                    .unwrap_or_default()
-                    .to_string();
-                assert!(
-                    registered.contains(&plugin.as_str()) || OURS.contains(&plugin.as_str()),
-                    "{name}: `data-{attr}` names no Datastar plugin — it will be ignored silently"
-                );
-            }
-        }
-    }
-
-    /// The page's one Datastar is the crate's: app.js imports it by the address
-    /// that copy is served at, not by a name the browser cannot resolve.
-    #[test]
-    fn app_js_imports_the_datastar_the_page_is_served() {
-        let url = askama_datastar::script::url("/assets/datastar.js");
-        assert!(
-            APP_JS.contains("\"datastar\""),
-            "the bundle no longer imports `datastar`; the rewrite in APP_JS_BODY finds nothing"
-        );
-        assert!(APP_JS_BODY.contains(&format!("\"{url}\"")));
-        assert!(!APP_JS_BODY.contains("\"datastar\""));
+        assert_eq!(headers[header::REFERRER_POLICY], "same-origin");
     }
 
     /// With eval allowed, escaping is what keeps backend-supplied strings (option
-    /// labels, error text) from executing. See `CSP`.
+    /// labels, error text) from executing. See `csp`.
     #[test]
     fn no_template_opts_out_of_escaping() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");

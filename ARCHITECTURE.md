@@ -163,7 +163,7 @@ radiosilence/koan#2365.
 (`TEST_DATABASE_URL`) and a fake backend it serves, fills every field the
 person, the registry or a backend controls with markup-shaped text, and
 requests every page (whole and in place), every region and every action's
-answer. `askama_datastar::escaping::Guard`, told the hostile text, the
+answer, signed in, through `askama_datastar::escaping::send`. `askama_datastar::escaping::Guard`, told the hostile text, the
 templates and the elements the kit writes, finds markup of the templates' own
 escaped, text escaped twice, or text left as markup. A new page, region or
 field belongs in it. CI runs it against a Postgres service; without a

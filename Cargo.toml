@@ -53,7 +53,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 # The dashboard: askama templates, Datastar's glue, and the kōan web kit's
 # components, whose askama_datastar is this one.
 askama = "0.16"
-askama_datastar = "0.3.1"
+askama_datastar = "0.3.2"
 koan-kit-web = "0.7"
 
 serde = { version = "1", features = ["derive"] }

@@ -14,14 +14,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use askama_datastar::escaping::{Guard, escaped, get};
+use askama_datastar::escaping::{Guard, escaped, get, send};
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Json, Request};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{StatusCode, header};
 use axum::routing::post;
 use serde_json::{Value, json};
-use tower::ServiceExt;
 
 use crate::auth::cookie::SESSION_COOKIE;
 use crate::auth::hydra::HydraAdmin;
@@ -116,33 +115,29 @@ async fn state(database_url: &str) -> AppState {
     }
 }
 
-/// `router` with the session cookie on every request.
-fn signed_in(router: Router, session: &str) -> Router {
-    let cookie = HeaderValue::from_str(&format!("{SESSION_COOKIE}={session}")).unwrap();
-    router.layer(axum::middleware::map_request(
-        move |mut request: Request| {
-            let cookie = cookie.clone();
-            async move {
-                request.headers_mut().insert(header::COOKIE, cookie);
-                request
-            }
-        },
-    ))
-}
-
-/// An action, posted as Datastar posts a form.
-async fn post_form(router: &Router, address: &str, body: &str) -> (StatusCode, String) {
-    let request = Request::post(address)
-        .header("datastar-request", "true")
-        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .body(Body::from(body.to_owned()))
-        .unwrap();
-    let response = router.clone().oneshot(request).await.unwrap();
-    let status = response.status();
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    (status, String::from_utf8_lossy(&body).into_owned())
+/// A request as the signed-in page makes it: a page load, or Datastar's
+/// request when `in_place`, a form's fields as the body of a POST.
+fn signed_in(
+    method: &str,
+    address: &str,
+    session: &str,
+    in_place: bool,
+    form: Option<String>,
+) -> Request {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(address)
+        .header(header::COOKIE, format!("{SESSION_COOKIE}={session}"));
+    if in_place {
+        request = request.header("datastar-request", "true");
+    }
+    match form {
+        Some(form) => request
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(form)),
+        None => request.body(Body::empty()),
+    }
+    .unwrap()
 }
 
 #[tokio::test]
@@ -170,8 +165,7 @@ async fn every_answer_escapes_what_others_control_exactly_once() {
         .unwrap()
         .unwrap();
 
-    let signed_out = super::routes().with_state(s.clone());
-    let router = signed_in(super::routes().with_state(s), &session);
+    let router = super::routes().with_state(s);
     let guard = Guard::new(&[HOSTILE])
         .templates(concat!(env!("CARGO_MANIFEST_DIR"), "/templates"))
         .unwrap()
@@ -198,9 +192,10 @@ async fn every_answer_escapes_what_others_control_exactly_once() {
     };
 
     for in_place in [false, true] {
-        let (status, answer) = get(&signed_out, "/", in_place, WAIT).await;
+        let (status, answer) = get(&router, "/", in_place, WAIT).await;
         check(&format!("/ in place {in_place}"), status, &answer, false);
-        let (status, answer) = get(&router, "/dashboard", in_place, WAIT).await;
+        let request = signed_in("GET", "/dashboard", &session, in_place, None);
+        let (status, answer) = send(&router, request, WAIT).await;
         check(
             &format!("/dashboard in place {in_place}"),
             status,
@@ -213,7 +208,8 @@ async fn every_answer_escapes_what_others_control_exactly_once() {
         "/dashboard/hostile/settings/calendar",
         "/dashboard/hostile/settings/broken",
     ] {
-        let (status, answer) = get(&router, region, true, WAIT).await;
+        let request = signed_in("GET", region, &session, true, None);
+        let (status, answer) = send(&router, request, WAIT).await;
         check(
             region,
             status,
@@ -223,7 +219,8 @@ async fn every_answer_escapes_what_others_control_exactly_once() {
     }
     // The dashboard again, now that the backend's answers stand and are drawn
     // by the page itself.
-    let (status, answer) = get(&router, "/dashboard", false, WAIT).await;
+    let request = signed_in("GET", "/dashboard", &session, false, None);
+    let (status, answer) = send(&router, request, WAIT).await;
     check("/dashboard answered", status, &answer, true);
 
     let hostile = url::form_urlencoded::byte_serialize(HOSTILE.as_bytes()).collect::<String>();
@@ -239,7 +236,8 @@ async fn every_answer_escapes_what_others_control_exactly_once() {
         ("/dashboard/fresh/credentials", "token=".to_string()),
         ("/dashboard/hostile/disconnect", String::new()),
     ] {
-        let (status, answer) = post_form(&router, action, &body).await;
+        let request = signed_in("POST", action, &session, true, Some(body));
+        let (status, answer) = send(&router, request, WAIT).await;
         check(action, status, &answer, true);
     }
 

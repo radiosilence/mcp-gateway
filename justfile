@@ -7,9 +7,10 @@ check:
     cargo test --locked --all-features
     actionlint
 
-# Format
+# Format the Rust and the templates
 fmt:
     cargo fmt --all
+    askama-analyzer fmt
 
 # Install the git hooks
 hooks:

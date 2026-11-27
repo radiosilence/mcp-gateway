@@ -113,7 +113,9 @@ anything being told to forget.
 
 An action changes something and answers with as little as it can:
 
-- Saving the credential form answers with the panel redrawn and a flash. A
+- Saving the credential form answers with the panel redrawn and a flash. The
+  panel replaces the old one rather than morphing into it, since a morph keeps
+  what was typed into an input the server left empty, a secret included. A
   complaint (a required field left empty) is a flash alone, so the form keeps
   what the person typed.
 - Changing a setting answers with a flash: the select already shows the

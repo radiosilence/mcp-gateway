@@ -225,13 +225,14 @@ async fn every_answer_escapes_what_others_control_exactly_once() {
     // A repeated id sends a patch, or a label's description, to the wrong
     // element.
     let mut ids = std::collections::HashSet::new();
+    let mut repeated = Vec::new();
     for id in answer
         .split(" id=\"")
         .skip(1)
         .filter_map(|rest| rest.split('"').next())
     {
         if !ids.insert(id) {
-            found.push(format!("/dashboard: the id {id:?} is on two elements"));
+            repeated.push(format!("/dashboard: the id {id:?} is on two elements"));
         }
     }
 
@@ -253,5 +254,6 @@ async fn every_answer_escapes_what_others_control_exactly_once() {
         check(action, status, &answer, true);
     }
 
+    found.extend(repeated);
     assert!(found.is_empty(), "{}", found.join("\n"));
 }

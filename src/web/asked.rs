@@ -2,7 +2,12 @@
 //! the request that wants the answer. A question is asked once however many
 //! requests want its answer at the same moment, and the answer is remembered
 //! for a while, so reloading the page, or a second tab opening it, does not
-//! ask the backend again.
+//! ask the backend again. Only a definite answer is remembered: a failure
+//! (a backend that timed out or could not say) is shared with the requests
+//! waiting on it and then forgotten, so the next request asks again.
+//!
+//! Each replica keeps its own answers, so with N replicas a question may be
+//! asked up to N times a minute.
 //!
 //! A key names everything the answer depends on, including when the
 //! credentials were last saved, so a change to them is a new question on
@@ -29,8 +34,10 @@ pub struct Questions {
 impl Default for Questions {
     fn default() -> Self {
         Self {
-            verdicts: Arc::new(Asked::new(Duration::from_secs(60))),
-            choices: Arc::new(Asked::new(Duration::from_secs(60))),
+            verdicts: Arc::new(Asked::new(Duration::from_secs(60), |v| {
+                *v != Verified::Unknown
+            })),
+            choices: Arc::new(Asked::new(Duration::from_secs(60), Result::is_ok)),
         }
     }
 }
@@ -46,13 +53,16 @@ pub(super) struct Asked<V> {
     known: Mutex<HashMap<String, Known<V>>>,
     /// How long an answer stands before the question is asked again.
     keep: Duration,
+    /// Whether an answer is definite, and so remembered.
+    definite: fn(&V) -> bool,
 }
 
 impl<V: Clone + Send + Sync + 'static> Asked<V> {
-    pub(super) fn new(keep: Duration) -> Self {
+    pub(super) fn new(keep: Duration, definite: fn(&V) -> bool) -> Self {
         Self {
             known: Mutex::default(),
             keep,
+            definite,
         }
     }
 
@@ -108,7 +118,10 @@ impl<V: Clone + Send + Sync + 'static> Asked<V> {
             Known::Asking(_) => true,
             Known::Answered(at, _) => at.elapsed() < self.keep,
         });
-        known.insert(key, Known::Answered(Instant::now(), answer));
+        match (self.definite)(&answer) {
+            true => known.insert(key, Known::Answered(Instant::now(), answer)),
+            false => known.remove(&key),
+        };
     }
 }
 
@@ -120,7 +133,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_question_in_flight_is_asked_once() {
-        let asked = Arc::new(Asked::<u32>::new(Duration::from_secs(60)));
+        let asked = Arc::new(Asked::<u32>::new(Duration::from_secs(60), |_| true));
         let times = Arc::new(AtomicUsize::new(0));
         let work = || {
             let times = times.clone();
@@ -141,7 +154,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_lapsed_answer_is_asked_again() {
-        let asked = Arc::new(Asked::<u32>::new(Duration::from_millis(10)));
+        let asked = Arc::new(Asked::<u32>::new(Duration::from_millis(10), |_| true));
         assert_eq!(asked.answer("k".into(), async { 1 }).await, Some(1));
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(asked.answer("k".into(), async { 2 }).await, Some(2));
@@ -149,11 +162,34 @@ mod tests {
 
     #[tokio::test]
     async fn a_question_whose_work_panicked_is_asked_again() {
-        let asked = Arc::new(Asked::<u32>::new(Duration::from_secs(60)));
+        let asked = Arc::new(Asked::<u32>::new(Duration::from_secs(60), |_| true));
         let answer = asked
             .answer("k".into(), async { panic!("the backend client broke") })
             .await;
         assert_eq!(answer, None);
         assert_eq!(asked.answer("k".into(), async { 3 }).await, Some(3));
+    }
+
+    #[tokio::test]
+    async fn a_failure_is_shared_while_asked_and_then_asked_again() {
+        let asked = Arc::new(Asked::<u32>::new(Duration::from_secs(60), |v| *v != 0));
+        let times = Arc::new(AtomicUsize::new(0));
+        let work = |answer| {
+            let times = times.clone();
+            async move {
+                times.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                answer
+            }
+        };
+        let (a, b) = tokio::join!(
+            asked.answer("k".into(), work(0)),
+            asked.answer("k".into(), work(0))
+        );
+        assert_eq!((a, b), (Some(0), Some(0)));
+        assert_eq!(times.load(Ordering::SeqCst), 1, "shared while in flight");
+        assert_eq!(asked.peek("k"), None, "a failure is not drawn from memory");
+        assert_eq!(asked.answer("k".into(), work(5)).await, Some(5));
+        assert_eq!(asked.peek("k"), Some(5));
     }
 }

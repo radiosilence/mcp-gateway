@@ -222,6 +222,18 @@ async fn every_answer_escapes_what_others_control_exactly_once() {
     let request = signed_in("GET", "/dashboard", &session, false, None);
     let (status, answer) = send(&router, request, WAIT).await;
     check("/dashboard answered", status, &answer, true);
+    // A repeated id sends a patch, or a label's description, to the wrong
+    // element.
+    let mut ids = std::collections::HashSet::new();
+    for id in answer
+        .split(" id=\"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+    {
+        if !ids.insert(id) {
+            found.push(format!("/dashboard: the id {id:?} is on two elements"));
+        }
+    }
 
     let hostile = url::form_urlencoded::byte_serialize(HOSTILE.as_bytes()).collect::<String>();
     for (action, body) in [

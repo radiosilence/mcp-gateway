@@ -47,7 +47,7 @@ pub(super) enum BadgeState {
 
 impl Badge {
     pub(super) fn id_of(mcp: &str) -> String {
-        format!("mcp-{mcp}-status")
+        format!("badge-{mcp}")
     }
 
     /// The badge for `mcp` as the page draws it: settled when there is nothing

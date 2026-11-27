@@ -93,4 +93,29 @@ mod tests {
         .unwrap();
         assert!(html.contains("No MCPs configured"), "{html}");
     }
+
+    /// MCP ids may hold `-`, so ids that only joined parts with it collided:
+    /// `cal`'s badge was the panel of an MCP called `cal-status`.
+    #[test]
+    fn no_two_regions_share_an_id() {
+        let ids = [
+            "cal",
+            "cal-status",
+            "cal-setting",
+            "cal-setting-x",
+            "x",
+            "cal_x",
+        ];
+        let mut all = std::collections::HashSet::new();
+        for mcp in ids {
+            assert!(all.insert(panel::Panel::id_of(mcp)));
+            assert!(all.insert(badge::Badge::id_of(mcp)));
+            for field in ids {
+                assert!(
+                    all.insert(setting::Setting::id_of(mcp, field)),
+                    "{mcp} {field}"
+                );
+            }
+        }
+    }
 }

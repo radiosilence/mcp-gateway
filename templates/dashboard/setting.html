@@ -8,12 +8,16 @@
       data-init="@get(el.dataset.url)"
       aria-busy="true"
     >
-      {%- filter kit::wrap(kit::Field::custom(label)) %}
+      {%- filter kit::wrap(kit::Field::custom(label).id(self.field_id())) %}
         <div class="skeleton">{{ kit::Select::new("value").label(label).option("", "").disabled(true).class("invisible") }}</div>
       {%- endfilter %}
     </div>
   {%- when SettingState::Failed with (reason) %}
-    <div id="{{ self.id() }}">{{ kit::Field::new(label, kit::Select::new("value").disabled(true)).error(reason) }}</div>
+    <div id="{{ self.id() }}">{{
+        kit::Field::new(label, kit::Select::new("value").disabled(true))
+            .error(reason)
+            .id(self.field_id())
+    }}</div>
   {%- when SettingState::Ready { options, selected } %}
     {%- let form = kit::Form::post(self.url()) %}
     <div id="{{ self.id() }}">
@@ -26,6 +30,7 @@
                     .selected(selected)
                     .datastar("on:change", "el.form.requestSubmit()"),
             )
+            .id(self.field_id())
         }}
       </form>
     </div>

@@ -98,7 +98,12 @@ nor the rest of the dashboard.
 The regions never ask a backend themselves. They ask `asked::Questions`, an
 `asked::Asked` per kind of question, which asks once however many requests
 want the answer at the same moment, on a task of its own so a request that
-gives up does not cancel it, and remembers the answer for a minute. A page
+gives up does not cancel it, and remembers a definite answer for a minute. A
+failure (a timeout, a backend that could not say) is shared with the
+requests waiting on it and then forgotten, so a reload asks again. Each
+replica remembers its own answers, so N replicas ask a question up to N times
+a minute, and a refusal (a no-auth MCP's "backend signed out") can stand for
+up to a minute after the backend recovers. A page
 drawn while an answer stands draws it at once rather than loading it. The key
 names everything the answer depends on, the time the credentials were last
 saved included, so saving them is a new question on every replica without
@@ -143,9 +148,15 @@ that both the page and the region use:
 | Where | Ids |
 |---|---|
 | Layout | `title`, `main`, and the kit's `flash` |
-| Dashboard | each MCP's panel `mcp-<id>` (`Panel::id_of`), its badge `mcp-<id>-status` (`Badge::id_of`), each setting `mcp-<id>-setting-<field>` (`Setting::id_of`) |
+| Dashboard | each MCP's panel `panel-<id>` (`Panel::id_of`), its badge `badge-<id>` (`Badge::id_of`), each setting `setting-<id>.<field>` (`Setting::id_of`) |
 
-Each region's tests check that every state it draws carries its id.
+Each kind of region has its own prefix, and `.`, which no MCP or field id may
+hold, parts an MCP from a field, so no two regions' ids can meet. Each
+region's tests check that every state it draws carries its id, and the guard
+that no id appears twice on the dashboard. A field the kit draws takes an id
+of its own (`credentials-<id>.<field>`, `setting-<id>.<field>-field`), since
+the kit builds its label's and note's ids from it, and the same form repeats
+once per MCP.
 
 ### The kit
 

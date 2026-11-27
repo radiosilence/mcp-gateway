@@ -43,8 +43,11 @@ pub(super) enum SettingState {
 }
 
 impl Setting {
+    /// The region's id. Each kind of region has its own prefix, and `.`, which
+    /// no MCP or field id may hold, parts the MCP from the field, so no two
+    /// regions' ids can meet.
     pub(super) fn id_of(mcp: &str, field: &str) -> String {
-        format!("mcp-{mcp}-setting-{field}")
+        format!("setting-{mcp}.{field}")
     }
 
     /// The setting as the page draws it: its choices when the backend's
@@ -75,6 +78,12 @@ impl Setting {
 
     fn id(&self) -> String {
         Self::id_of(&self.mcp, &self.field)
+    }
+
+    /// The field's id, which its label and note ids are built from: every
+    /// setting's control is named `value`.
+    fn field_id(&self) -> String {
+        format!("{}-field", self.id())
     }
 
     fn url(&self) -> String {

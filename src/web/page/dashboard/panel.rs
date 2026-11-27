@@ -492,10 +492,6 @@ mod tests {
     #[test]
     fn a_stored_secret_is_neither_shown_nor_required() {
         let stored = CredentialSet::from([("password".into(), "hunter2".into())]);
-        let mcp: Mcp = serde_json::from_value(json!({
-            "id": "caldav", "name": "CalDAV", "backend": "http://backend.test/mcp",
-        }))
-        .unwrap();
         let input = Input::of(&field("password", true, true), Some(&stored));
         let html = kit::Field::new(&input.label, input.control())
             .hint(input.hint())

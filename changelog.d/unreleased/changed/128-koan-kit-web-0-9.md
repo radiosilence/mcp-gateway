@@ -1,0 +1,1 @@
+- **koan-kit-web 0.9.** A configured MCP whose backend cannot confirm it is shown in the kit's neutral tone, the credentials' age is shown in the reader's own time zone and kept current, and a failed request is still reported after an earlier flash, which 0.8 stopped doing.

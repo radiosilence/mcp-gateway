@@ -58,18 +58,12 @@ impl Layout {
         assets::css_url()
     }
 
-    fn js(&self) -> String {
-        assets::js_url()
-    }
-
     fn version(&self) -> &'static str {
         crate::VERSION
     }
 
-    /// The address bar following `$url`, the address a page loaded in place
-    /// shows.
-    fn history(&self) -> Html {
-        askama_datastar::history("url")
+    fn flash(&self) -> kit::Flash<'static> {
+        flash_region()
     }
 }
 
@@ -108,7 +102,7 @@ pub(super) async fn serve<P: Page>(
     let signals = serde_json::json!({ "url": url }).to_string();
     if askama_datastar::is_datastar(&headers) {
         return askama_datastar::events([
-            super::patch(Html::from_iter([main, title, kit::Flash::region().html()])),
+            super::patch(Html::from_iter([main, title, flash_region().html()])),
             PatchSignals::new(signals).into(),
         ]);
     }
@@ -120,4 +114,13 @@ pub(super) async fn serve<P: Page>(
         Ok(html) => html.into_response(),
         Err(e) => crate::error::AppError::Internal(e.into()).into_response(),
     }
+}
+
+/// The page's flash region, which also says a request that failed and sends a
+/// session that has ended to the sign-in.
+fn flash_region() -> kit::Flash<'static> {
+    kit::Flash::region()
+        .failed("Something went wrong. Try again.")
+        .unreachable("The gateway could not be reached. Try again.")
+        .sign_in("/login")
 }

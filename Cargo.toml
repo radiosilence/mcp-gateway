@@ -54,7 +54,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 # components, whose askama_datastar is this one.
 askama = "0.16"
 askama_datastar = "0.3.2"
-koan-kit-web = "0.7"
+koan-kit-web = "0.8.1"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

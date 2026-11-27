@@ -80,12 +80,6 @@ impl Setting {
         Self::id_of(&self.mcp, &self.field)
     }
 
-    /// The field's id, which its label and note ids are built from: every
-    /// setting's control is named `value`.
-    fn field_id(&self) -> String {
-        format!("{}-field", self.id())
-    }
-
     fn url(&self) -> String {
         SETTING
             .replace("{mcp}", &self.mcp)

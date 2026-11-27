@@ -116,12 +116,19 @@ impl Connector {
 #[derive(Template)]
 #[template(path = "dashboard/credentials.html")]
 struct Credentials {
+    mcp: String,
     url: String,
     inputs: Vec<Input>,
     connected: bool,
 }
 
 impl Credentials {
+    /// The form's id, which its fields' ids are built on: the same form is on
+    /// the page once per MCP.
+    fn id(&self) -> String {
+        format!("credentials-{}", self.mcp)
+    }
+
     fn submit(&self) -> &'static str {
         match self.connected {
             true => "Save",
@@ -132,9 +139,6 @@ impl Credentials {
 
 /// One input of the credential form.
 struct Input {
-    /// The field's own id, which its label and note ids are built from: the
-    /// same form is on the page once per MCP.
-    id: String,
     name: String,
     label: String,
     kind: kit::InputKind,
@@ -149,10 +153,9 @@ struct Input {
 }
 
 impl Input {
-    fn of(mcp: &Mcp, f: &CredentialField, stored: Option<&CredentialSet>) -> Self {
+    fn of(f: &CredentialField, stored: Option<&CredentialSet>) -> Self {
         let value = stored.and_then(|s| s.get(&f.id));
         Self {
-            id: format!("credentials-{}.{}", mcp.id, f.id),
             name: f.id.clone(),
             label: match f.required {
                 true => f.label.clone(),
@@ -229,12 +232,13 @@ impl Panel {
         };
         let form = || {
             Credentials {
+                mcp: mcp.id.clone(),
                 url: CREDENTIALS.replace("{mcp}", &mcp.id),
                 inputs: mcp
                     .fields
                     .iter()
                     .filter(|f| f.options_query.is_none())
-                    .map(|f| Input::of(mcp, f, values))
+                    .map(|f| Input::of(f, values))
                     .collect(),
                 connected: meta.is_some(),
             }
@@ -488,11 +492,7 @@ mod tests {
     #[test]
     fn a_stored_secret_is_neither_shown_nor_required() {
         let stored = CredentialSet::from([("password".into(), "hunter2".into())]);
-        let mcp: Mcp = serde_json::from_value(json!({
-            "id": "caldav", "name": "CalDAV", "backend": "http://backend.test/mcp",
-        }))
-        .unwrap();
-        let input = Input::of(&mcp, &field("password", true, true), Some(&stored));
+        let input = Input::of(&field("password", true, true), Some(&stored));
         let html = kit::Field::new(&input.label, input.control())
             .hint(input.hint())
             .to_string();

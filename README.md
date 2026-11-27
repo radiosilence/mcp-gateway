@@ -96,7 +96,7 @@ docker compose up --build
 You can exercise the whole browser flow (login, set token, test connection) at
 `http://localhost:8080` directly — no HTTPS needed for a local browser.
 
-The page loads nothing from the internet: the stylesheet, script and font are
+The page loads nothing from the internet: the stylesheet, Datastar and the font are
 embedded in the binary. Each is served under an address carrying a hash of its
 contents (askama_datastar's `Asset`), so a browser caches it for good and a
 new release's page fetches the new copy rather than a stale one.

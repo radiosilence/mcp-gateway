@@ -2,36 +2,19 @@
     choices or the backend's reason for giving none. Ready, a change saves the setting on its own. -#}
 {%- match state %}
   {%- when SettingState::Loading %}
-    <div
-      id="{{ self.id() }}"
-      data-url="{{ self.url() }}"
-      data-init="@get(el.dataset.url)"
-      aria-busy="true"
-    >
-      {%- filter kit::wrap(kit::Field::custom(label).id(self.field_id())) %}
-        <div class="skeleton">{{ kit::Select::new("value").label(label).option("", "").disabled(true).class("invisible") }}</div>
-      {%- endfilter %}
-    </div>
+    {{ kit::Field::new(label, kit::Select::new("value")).loads(self.url()).id(self.id()) }}
   {%- when SettingState::Failed with (reason) %}
-    <div id="{{ self.id() }}">{{
-        kit::Field::new(label, kit::Select::new("value").disabled(true))
-            .error(reason)
-            .id(self.field_id())
-    }}</div>
+    {{
+        kit::Field::new(label, kit::Select::new("value").disabled(true)).error(reason).id(self.id())
+    }}
   {%- when SettingState::Ready { options, selected } %}
-    {%- let form = kit::Form::post(self.url()) %}
-    <div id="{{ self.id() }}">
-      <form {{ form.attrs() }}>
-        {{
-            kit::Field::new(
-                label,
-                kit::Select::new("value")
-                    .options(options.iter())
-                    .selected(selected)
-                    .datastar("on:change", "el.form.requestSubmit()"),
-            )
-            .id(self.field_id())
-        }}
-      </form>
-    </div>
+    {%- let form = kit::Form::post(self.url()).id(self.id()).live() %}
+    <form {{ form.attrs() }}>
+      {{
+          form.field(kit::Field::new(
+              label,
+              kit::Select::new("value").options(options.iter()).selected(selected),
+          ))
+      }}
+    </form>
 {%- endmatch %}

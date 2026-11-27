@@ -70,7 +70,7 @@ page's.
   refused, and take the session through `FragmentSession`, which answers 401
   rather than redirecting.
 - **Sign-in**: `/login` and `/auth/callback`, rate limited per client address.
-- **Assets**: the stylesheet and script under fingerprinted addresses, Datastar
+- **Assets**: the stylesheet under a fingerprinted address, Datastar
   from askama_datastar and the typeface from the kit.
 
 ### Pages
@@ -79,8 +79,7 @@ Every page implements `page::Page`: its title, what it reads from the request
 (any axum extractor, such as `PageSession`), and its body, or the address it
 should go to instead. `page::serve` draws a page whole for a browser, and in
 place for Datastar: the body morphed into `main`, the title, and the address
-as `$url`, which the layout's `askama_datastar::history("url")` keeps the
-address bar on. Signing out answers `askama_datastar::go("/")` with the
+as `$url`, which the layout's `kit::Navigation` keeps the address bar on. Signing out answers `askama_datastar::go("/")` with the
 cookies cleared.
 
 ### No live stream
@@ -90,7 +89,7 @@ except by the person's own action, whose answer redraws what it changed, and
 the gateway runs as several replicas, where a stream on one would not hear an
 answer fetched by another. What only a backend knows is a region the page
 loads once it is up instead: the badge (`kit::Status::loads`) and each
-setting (`data-init` on its region). So a slow backend holds neither the page
+setting (`kit::Field::loads`). So a slow backend holds neither the page
 nor the rest of the dashboard.
 
 ### Backend questions
@@ -123,9 +122,10 @@ An action changes something and answers with as little as it can:
 - Disconnecting is asked first in the page's one `kit::Confirm`, and answers
   with the panel redrawn, a flash, and `kit::Confirm::close`.
 
-`assets/app.js` turns a request that failed into a flash, and sends a session
-that has ended to the sign-in, since Datastar drops the body of a failed
-response.
+The layout's flash region (`kit::Flash::region().failed(…).unreachable(…)
+.sign_in("/login")`) turns a request that failed into a flash, and sends a
+session that has ended to the sign-in, since Datastar drops the body of a
+failed response. The page carries no script of its own.
 
 ### Templates and markup
 

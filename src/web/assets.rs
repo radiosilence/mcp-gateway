@@ -1,4 +1,4 @@
-//! The page's stylesheet and script, embedded in the binary and served under
+//! The page's stylesheet, embedded in the binary and served under
 //! fingerprinted addresses, so a browser keeps each for good and a page from a
 //! new build fetches the new copy at once. Datastar is askama_datastar's copy
 //! and the typeface the kit's, each served from its crate.
@@ -12,32 +12,22 @@ use axum::routing::get;
 use koan_kit_web as kit;
 
 const CSS_PATH: &str = "/assets/app.css";
-const JS_PATH: &str = "/assets/app.js";
 const DATASTAR_PATH: &str = "/assets/datastar.js";
 
 /// The stylesheet `just css` compiles from `styles/` and the kit.
 const CSS_SOURCE: &str = include_str!("../../assets/app.css");
-/// The page's own script.
-const JS_SOURCE: &str = include_str!("../../assets/app.js");
 
 static CSS: Asset = Asset::new(CSS_SOURCE.as_bytes(), "text/css; charset=utf-8");
-static JS: Asset = Asset::new(JS_SOURCE.as_bytes(), "text/javascript; charset=utf-8");
 
 /// The stylesheet's address, for the page's head.
 pub fn css_url() -> String {
     CSS.url(CSS_PATH)
 }
 
-/// The script's address, for the page's head.
-pub fn js_url() -> String {
-    JS.url(JS_PATH)
-}
-
 /// The routes serving the stylesheet and the scripts.
 pub fn routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         .route(CSS_PATH, get(CSS.serve()))
-        .route(JS_PATH, get(JS.serve()))
         .route(DATASTAR_PATH, get(script::serve))
 }
 

@@ -1,0 +1,1 @@
+- **koan-kit-web 0.8.1.** A failed request, a lost connection and an ended session are handled by the kit's flash region, so the page loads no script of its own; a setting loads and saves through the kit's `Field::loads` and `Form::live`.

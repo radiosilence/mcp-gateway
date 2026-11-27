@@ -74,7 +74,10 @@ mod tests {
     /// compile and only show up as a broken page.
     #[test]
     fn the_embedded_stylesheet_is_real() {
-        assert!(CSS_SOURCE.contains("box-sizing:border-box"), "no preflight");
+        assert!(
+            CSS_SOURCE.contains("box-sizing: border-box"),
+            "no preflight"
+        );
         assert!(CSS_SOURCE.contains("max-w-2xl"), "utilities missing");
         assert!(CSS_SOURCE.contains("Geist Mono"), "the kit is missing");
     }

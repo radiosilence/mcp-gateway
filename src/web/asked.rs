@@ -98,8 +98,7 @@ impl<V: Clone + Send + Sync + 'static> Asked<V> {
                 }
             }
         };
-        let answer = waiting.wait_for(Option::is_some).await.ok()?.clone();
-        answer
+        waiting.wait_for(Option::is_some).await.ok()?.clone()
     }
 
     fn settle(&self, key: String, answer: V) {

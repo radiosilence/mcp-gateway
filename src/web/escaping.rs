@@ -234,7 +234,7 @@ async fn every_answer_escapes_what_others_control_exactly_once() {
         ),
         (
             "/dashboard/hostile/settings/calendar",
-            format!("value=plain"),
+            "value=plain".to_string(),
         ),
         ("/dashboard/fresh/credentials", "token=".to_string()),
         ("/dashboard/hostile/disconnect", String::new()),

@@ -73,7 +73,7 @@ impl<V: Clone + Send + Sync + 'static> Asked<V> {
     /// The answer to `key`: the standing one, the one in flight once it
     /// lands, or `work`'s, asked now. The work runs on its own task, so a
     /// request that gives up does not cancel it for the others waiting.
-    /// `None` only when the work panicked.
+    /// `None` only when the work panicked, which the next request asks again.
     pub(super) async fn answer<F>(self: &Arc<Self>, key: String, work: F) -> Option<V>
     where
         F: Future<Output = V> + Send + 'static,
@@ -84,7 +84,8 @@ impl<V: Clone + Send + Sync + 'static> Asked<V> {
                 Some(Known::Answered(at, answer)) if at.elapsed() < self.keep => {
                     return Some(answer.clone());
                 }
-                Some(Known::Asking(waiting)) => waiting.clone(),
+                // A question whose task died (it panicked) is asked again.
+                Some(Known::Asking(waiting)) if waiting.has_changed().is_ok() => waiting.clone(),
                 _ => {
                     let (tell, waiting) = watch::channel(None);
                     known.insert(key.clone(), Known::Asking(waiting.clone()));
@@ -144,5 +145,15 @@ mod tests {
         assert_eq!(asked.answer("k".into(), async { 1 }).await, Some(1));
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(asked.answer("k".into(), async { 2 }).await, Some(2));
+    }
+
+    #[tokio::test]
+    async fn a_question_whose_work_panicked_is_asked_again() {
+        let asked = Arc::new(Asked::<u32>::new(Duration::from_secs(60)));
+        let answer = asked
+            .answer("k".into(), async { panic!("the backend client broke") })
+            .await;
+        assert_eq!(answer, None);
+        assert_eq!(asked.answer("k".into(), async { 3 }).await, Some(3));
     }
 }

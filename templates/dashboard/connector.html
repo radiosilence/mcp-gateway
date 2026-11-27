@@ -1,10 +1,20 @@
 <div class="mt-3">
   {%- filter kit::wrap(kit::Disclosure::new("Add to Claude (desktop, web, mobile)")) %}
-  <p class="my-1 text-fine text-muted">Settings → Connectors → Add custom connector, paste this URL, and sign in when prompted:</p>
-  {{ kit::CopyField::new("Connector URL", url, "Copy").copied("Copied") }}
+  {{
+      kit::CopyField::new("Connector URL", url, "Copy")
+          .copied("Copied")
+          .description(
+              "Settings → Connectors → Add custom connector, paste this URL, and sign in when prompted:",
+          )
+          .id(self.url_id())
+  }}
   {%- endfilter %}
   {%- filter kit::wrap(kit::Disclosure::new("Add to Claude Code")) %}
-  <p class="my-1 text-fine text-muted">Adds it user-scoped; Claude Code handles the sign-in on first use:</p>
-  {{ kit::CopyField::new("Claude Code command", command, "Copy").copied("Copied") }}
+  {{
+      kit::CopyField::new("Claude Code command", command, "Copy")
+          .copied("Copied")
+          .description("Adds it user-scoped; Claude Code handles the sign-in on first use:")
+          .id(self.command_id())
+  }}
   {%- endfilter %}
 </div>

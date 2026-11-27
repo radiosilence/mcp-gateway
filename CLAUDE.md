@@ -19,12 +19,18 @@ An OAuth-fronted gateway for self-hosted MCP servers: it authenticates the user 
 ## Check
 
 ```sh
-just check   # fmt --check, clippy -D warnings, tests, actionlint
+just check   # fmt --check, clippy -D warnings, tests, the stylesheet, actionlint
 just fmt
-mise run web # after changing web/ or a template; CI checks assets/ is current
+just css     # after changing a template or styles/; CI checks assets/app.css is current
 ```
 
+The escaping guard (`web::escaping`) needs a Postgres in `TEST_DATABASE_URL`; without one it is skipped locally.
+
 The Pulumi component is checked separately: `npm ci && npm run check` in `deploy/pulumi`.
+
+## Web UI
+
+`ARCHITECTURE.md` describes the web UI: one route table in `web::routes`, a module and template directory per page named as the UI names it, markup only from templates and koan-kit-web components, ids only on regions the server sends again (listed there), and the escaping guard every new page, region or field joins.
 
 ## CI/CD
 

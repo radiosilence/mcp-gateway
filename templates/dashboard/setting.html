@@ -1,0 +1,17 @@
+{#- The region a setting stands in. Loading, it fetches its replacement as the page starts: this setting, with its
+    choices or the backend's reason for giving none. Ready, a change saves the setting on its own. -#}
+<div id="{{ self.id() }}"
+{%- match state %}
+{%- when SettingState::Loading %} data-url="{{ self.url() }}" data-init="@get(el.dataset.url)" aria-busy="true">
+  {%- filter kit::wrap(kit::Field::custom(label)) %}
+  <div class="skeleton">{{ kit::Select::new("value").label(label).option("", "").disabled(true).class("invisible") }}</div>
+  {%- endfilter %}
+{%- when SettingState::Failed with (reason) %}>
+  {{ kit::Field::new(label, kit::Select::new("value").disabled(true)).error(reason) }}
+{%- when SettingState::Ready { options, selected } %}>
+  {%- let form = kit::Form::post(self.url()) %}
+  <form {{ form.attrs() }}>
+    {{ kit::Field::new(label, kit::Select::new("value").options(options.iter()).selected(selected).datastar("on:change", "el.form.requestSubmit()")) }}
+  </form>
+{%- endmatch %}
+</div>

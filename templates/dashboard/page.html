@@ -1,0 +1,15 @@
+<div class="mx-auto max-w-2xl px-4 py-10">
+  <header class="flex items-start justify-between gap-4">
+    <div>
+      <h1 class="mb-1">MCP Gateway</h1>
+      <p class="my-0 text-meta text-muted">signed in as <span class="text-ink">{{ login }}</span></p>
+    </div>
+    {{ kit::Button::quiet("Sign out").post("/logout") }}
+  </header>
+  {%- if panels.is_empty() %}
+  {{ kit::Empty::new("No MCPs configured").detail("Add entries to the gateway's registry, MCP_REGISTRY.").class("mt-8") }}
+  {%- endif %}
+  {%- for p in panels %}
+  {{ p }}
+  {%- endfor %}
+</div>

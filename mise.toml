@@ -13,6 +13,10 @@ node = "24"
 # Compiles styles/ into the committed assets/app.css (`just css`). Exact,
 # because CI checks the committed stylesheet against a rebuild.
 "github:tailwindlabs/tailwindcss" = "4.3.3"
+# Formats the askama templates (`just fmt`) and checks them in CI, as the editor does.
+# Our own tool, so mise's wait before installing a new release is off: CI runs the
+# release the editor runs.
+"github:radiosilence/askama-analyzer" = { version = "latest", minimum_release_age = "0" }
 
 [env]
 # Dev hostnames (radiosilence.dev = dev; blit.cc = prod). Must be on a domain

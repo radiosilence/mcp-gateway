@@ -7,9 +7,13 @@
     {{ kit::Button::quiet("Sign out").post("/logout") }}
   </header>
   {%- if panels.is_empty() %}
-  {{ kit::Empty::new("No MCPs configured").detail("Add entries to the gateway's registry, MCP_REGISTRY.").class("mt-8") }}
+    {{
+        kit::Empty::new("No MCPs configured")
+            .detail("Add entries to the gateway's registry, MCP_REGISTRY.")
+            .class("mt-8")
+    }}
   {%- endif %}
   {%- for p in panels %}
-  {{ p }}
+    {{ p }}
   {%- endfor %}
 </div>

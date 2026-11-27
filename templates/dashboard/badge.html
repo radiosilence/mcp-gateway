@@ -1,6 +1,6 @@
 {#- Checking, it loads its answer as the page starts; the answer is this badge, settled, under the same id. -#}
 {%- if self.checking() %}
-{{ kit::Status::wait("Checking…").loads(self.url()).id(self.id()) }}
+  {{ kit::Status::wait("Checking…").loads(self.url()).id(self.id()) }}
 {%- else %}
-{{ self.settled().id(self.id()) }}
+  {{ self.settled().id(self.id()) }}
 {%- endif %}

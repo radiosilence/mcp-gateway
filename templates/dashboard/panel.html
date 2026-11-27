@@ -5,26 +5,32 @@
     {{ badge }}
   </div>
   {%- match connection %}
-  {%- when Connection::Unconfigured { form, help } %}
-  {%- if let Some(help) = help %}
-  <p class="mt-2 mb-0 text-meta text-muted">Get credentials: {{ kit::Link::new(help, help).attr("target", "_blank").attr("rel", "noreferrer") }}</p>
-  {%- endif %}
-  {{ form }}
-  {%- when Connection::Open { connector, settings } %}
-  <p class="mt-2 mb-0 text-meta text-muted">No credentials needed. Add it to Claude:</p>
-  {{ connector }}
-  {%- if !settings.is_empty() %}
-  <div class="mt-4 grid gap-4">{% for s in settings %}{{ s }}{% endfor %}</div>
-  {%- endif %}
-  {%- when Connection::Configured { updated, connector, settings, form } %}
-  <p class="mt-2 mb-0 text-meta text-muted">Credentials set · updated <time datetime="{{ updated.at }}" title="{{ updated.at }}">{{ updated.ago }}</time>. Add it to Claude:</p>
-  {{ connector }}
-  {%- if !settings.is_empty() %}
-  <div class="mt-4 grid gap-4">{% for s in settings %}{{ s }}{% endfor %}</div>
-  {%- endif %}
-  {%- filter kit::wrap(kit::Disclosure::new("Edit credentials").class("mt-6")) %}
+    {%- when Connection::Unconfigured { form, help } %}
+      {%- if let Some(help) = help %}
+        <p class="mt-2 mb-0 text-meta text-muted">Get credentials: {{ kit::Link::new(help, help).attr("target", "_blank").attr("rel", "noreferrer") }}</p>
+      {%- endif %}
+      {{ form }}
+    {%- when Connection::Open { connector, settings } %}
+      <p class="mt-2 mb-0 text-meta text-muted">No credentials needed. Add it to Claude:</p>
+      {{ connector }}
+      {%- if !settings.is_empty() %}
+        <div class="mt-4 grid gap-4">{% for s in settings %}{{ s }}{% endfor %}</div>
+      {%- endif %}
+    {%- when Connection::Configured { updated, connector, settings, form } %}
+      <p class="mt-2 mb-0 text-meta text-muted">Credentials set · updated <time datetime="{{ updated.at }}" title="{{ updated.at }}">{{ updated.ago }}</time>. Add it to Claude:</p>
+      {{ connector }}
+      {%- if !settings.is_empty() %}
+        <div class="mt-4 grid gap-4">{% for s in settings %}{{ s }}{% endfor %}</div>
+      {%- endif %}
+      {%- filter kit::wrap(kit::Disclosure::new("Edit credentials").class("mt-6")) %}
   {{ form }}
   {%- endfilter %}
-  <div class="mt-4">{{ kit::Button::bordered("Disconnect").bad().post(self.disconnect_url()).confirm(self.disconnect_question(), "Disconnect").yes_bad() }}</div>
+      <div class="mt-4">{{
+          kit::Button::bordered("Disconnect")
+              .bad()
+              .post(self.disconnect_url())
+              .confirm(self.disconnect_question(), "Disconnect")
+              .yes_bad()
+      }}</div>
   {%- endmatch %}
 </section>

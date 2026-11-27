@@ -32,9 +32,10 @@ kit:
     manifest=$(cargo metadata --format-version 1 --locked | python3 -c 'import json, sys; print(next(p["manifest_path"] for p in json.load(sys.stdin)["packages"] if p["name"] == "koan-kit-web"))')
     ln -sfn "$(dirname "$manifest")" styles/kit
 
-# Format
+# Format the Rust and the templates
 fmt:
     cargo fmt --all
+    askama-analyzer fmt
 
 # Install the git hooks
 hooks:

@@ -4,8 +4,8 @@
       data-on:change="@patch(el.getAttribute('action'), {contentType: 'form'})">
   <select name="value">
     <option value="">{% if let Some(d) = account_default %}account default ({{ d }}){% else %}account default{% endif %}</option>
-    {%- for o in options %}
-      <option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}{% if o.is_default %} — account default{% endif %}</option>
-    {%- endfor %}
+{%- for o in options %}
+    <option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}{% if o.is_default %} — account default{% endif %}</option>
+{%- endfor %}
   </select>
 </form>

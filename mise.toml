@@ -12,7 +12,7 @@ jq = "latest"
 # aube versions differ in how they write the lockfile.
 node = "24"
 aube = "2.8.5"
-# Formats and checks the askama templates (`just fmt`, `just check`), as the editor does.
+# Formats the askama templates (`just fmt`) and checks them in CI, as the editor does.
 # Our own tool, so mise's wait before installing a new release is off: CI runs the
 # release the editor runs.
 "github:radiosilence/askama-analyzer" = { version = "latest", minimum_release_age = "0" }

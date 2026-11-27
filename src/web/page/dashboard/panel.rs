@@ -5,9 +5,10 @@
 use std::collections::HashMap;
 
 use askama::Template;
-use askama_datastar::Html;
+use askama_datastar::{ElementPatchMode, Html};
 use axum::extract::{Form, Path, State};
 use axum::response::Response;
+use axum::response::sse::Event;
 use koan_kit_web as kit;
 
 use super::badge::Badge;
@@ -18,7 +19,7 @@ use crate::config::{CredentialField, Mcp};
 use crate::error::AppResult;
 use crate::state::AppState;
 use crate::store::{CredentialSet, TokenMeta};
-use crate::web::{Draw, flash, patch};
+use crate::web::{Draw, flash};
 
 /// Where the credential form saves.
 pub(in crate::web) const CREDENTIALS: &str = "/dashboard/{mcp}/credentials";
@@ -279,13 +280,19 @@ impl Panel {
     }
 }
 
-/// The panel re-read from the store: the answer to every change to it.
-async fn redrawn(s: &AppState, sub: &str, mcp: &Mcp) -> AppResult<Html> {
+/// The panel re-read from the store, as the answer to every change to it.
+/// It replaces the panel rather than morphing into it, since a morph keeps
+/// what was typed into an input the server left empty, a secret included.
+async fn redrawn(s: &AppState, sub: &str, mcp: &Mcp) -> AppResult<Event> {
     let stored = s
         .store
         .get_credentials_with_meta(sub, &mcp.id, mcp.primary_field())
         .await?;
-    Ok(Panel::of(s, sub, mcp, stored).draw())
+    Ok(Panel::of(s, sub, mcp, stored)
+        .draw()
+        .patch()
+        .mode(ElementPatchMode::Replace)
+        .into())
 }
 
 /// One input per field. A plain map: `serde_urlencoded` cannot deserialize a
@@ -325,7 +332,7 @@ pub(in crate::web) async fn save(
         None => Ok("Saved".to_string()),
     };
     Ok(askama_datastar::events([
-        patch(redrawn(&s, &session.sub, mcp).await?),
+        redrawn(&s, &session.sub, mcp).await?,
         flash(said.as_deref().map_err(String::as_str)),
     ]))
 }
@@ -339,7 +346,7 @@ pub(in crate::web) async fn disconnect(
     let mcp = super::mcp(&s, &mcp_id)?;
     s.store.delete_credential(&session.sub, &mcp.id).await?;
     Ok(askama_datastar::events([
-        patch(redrawn(&s, &session.sub, mcp).await?),
+        redrawn(&s, &session.sub, mcp).await?,
         flash(Ok("Disconnected")),
         kit::Confirm::close().into(),
     ]))

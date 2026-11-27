@@ -88,14 +88,8 @@ impl Badge {
             BadgeState::Connected => kit::Status::ok("Connected"),
             BadgeState::Rejected { no_auth: true } => kit::Status::bad("Backend signed out"),
             BadgeState::Rejected { no_auth: false } => kit::Status::bad("Credentials rejected"),
-            // Not `ok`, which would claim it works, and not `wait`, which reads
-            // as still checking.
-            BadgeState::Unknown { no_auth: true } => {
-                kit::Status::wait("Status unknown").tone_class("unknown")
-            }
-            BadgeState::Unknown { no_auth: false } => {
-                kit::Status::wait("Configured").tone_class("unknown")
-            }
+            BadgeState::Unknown { no_auth: true } => kit::Status::neutral("Status unknown"),
+            BadgeState::Unknown { no_auth: false } => kit::Status::neutral("Configured"),
         }
     }
 }
@@ -200,7 +194,7 @@ mod tests {
         // Asked, and the backend could not say: not green, which would be a
         // claim there are no grounds for.
         let unknown = badge(BadgeState::Unknown { no_auth: false });
-        assert!(unknown.contains("Configured") && unknown.contains("unknown"));
+        assert!(unknown.contains("Configured") && unknown.contains("neutral"));
         assert!(!badge(BadgeState::Checking).contains("Not configured"));
     }
 

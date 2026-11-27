@@ -45,48 +45,12 @@ enum Connection {
     },
     /// Credentials stored.
     Configured {
-        updated: Updated,
+        /// When the credentials were last saved.
+        updated: kit::Time<'static>,
         connector: Html,
         settings: Vec<Html>,
         form: Html,
     },
-}
-
-/// When the credentials were last saved.
-struct Updated {
-    /// RFC 3339, for `<time datetime>`.
-    at: String,
-    /// How long ago, in words: the server does not know the viewer's
-    /// timezone, so a relative time is the one it can draw correctly.
-    ago: String,
-}
-
-impl Updated {
-    fn of(meta: &TokenMeta) -> Self {
-        let at = meta
-            .updated_at
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap_or_else(|_| meta.updated_at.to_string());
-        Self {
-            at,
-            ago: ago(time::OffsetDateTime::now_utc() - meta.updated_at),
-        }
-    }
-}
-
-fn ago(elapsed: time::Duration) -> String {
-    let seconds = elapsed.whole_seconds().max(0);
-    let (n, unit) = match seconds {
-        0..60 => return "just now".into(),
-        60..3_600 => (seconds / 60, "minute"),
-        3_600..86_400 => (seconds / 3_600, "hour"),
-        86_400..2_592_000 => (seconds / 86_400, "day"),
-        _ => (seconds / 2_592_000, "month"),
-    };
-    match n {
-        1 => format!("1 {unit} ago"),
-        n => format!("{n} {unit}s ago"),
-    }
 }
 
 /// How to add the MCP to Claude: its connector URL, and the command that adds
@@ -94,6 +58,7 @@ fn ago(elapsed: time::Duration) -> String {
 #[derive(Template)]
 #[template(path = "dashboard/connector.html")]
 struct Connector {
+    mcp: String,
     url: String,
     command: String,
 }
@@ -102,12 +67,21 @@ impl Connector {
     fn of(s: &AppState, mcp: &Mcp) -> Self {
         let url = format!("{}/{}", s.config.public_url.trim_end_matches('/'), mcp.id);
         Self {
+            mcp: mcp.id.clone(),
             command: format!(
                 "claude mcp add --transport http --scope user {} {url}",
                 mcp.id
             ),
             url,
         }
+    }
+
+    fn url_id(&self) -> String {
+        format!("connector-{}", self.mcp)
+    }
+
+    fn command_id(&self) -> String {
+        format!("command-{}", self.mcp)
     }
 }
 
@@ -250,7 +224,11 @@ impl Panel {
                 settings: settings(),
             },
             (false, Some(meta)) => Connection::Configured {
-                updated: Updated::of(meta),
+                updated: kit::Time::millis(
+                    meta.updated_at.unix_timestamp() * 1000
+                        + i64::from(meta.updated_at.millisecond()),
+                )
+                .relative(),
                 connector: connector(),
                 settings: settings(),
                 form: form(),
@@ -475,16 +453,6 @@ mod tests {
         assert_eq!(form.get("username").map(String::as_str), Some("jc@blit.cc"));
         assert_eq!(form.get("password").map(String::as_str), Some("pw"));
         assert_eq!(form.get("url").map(String::as_str), Some(""));
-    }
-
-    #[test]
-    fn elapsed_time_reads_as_words() {
-        let ago = |secs| ago(time::Duration::seconds(secs));
-        assert_eq!(ago(5), "just now");
-        assert_eq!(ago(60), "1 minute ago");
-        assert_eq!(ago(3 * 3_600), "3 hours ago");
-        assert_eq!(ago(2 * 86_400), "2 days ago");
-        assert_eq!(ago(-200), "just now");
     }
 
     /// A secret is never drawn back, and one that is stored need not be typed

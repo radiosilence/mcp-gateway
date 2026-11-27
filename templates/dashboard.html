@@ -1,27 +1,27 @@
 {% extends "base.html" %}
 {% block title %}Dashboard · MCP Gateway{% endblock %}
 {% block body %}
-<div class="mx-auto max-w-2xl px-4 py-10">
-  <header class="flex items-start justify-between gap-4">
-    <div>
-      <h1 class="mb-1">MCP Gateway</h1>
-      <p class="my-0 text-meta text-muted">signed in as <span class="text-ink">{{ login }}</span></p>
-    </div>
-    <form method="post" action="/logout">
-      <button class="quiet">Sign out</button>
-    </form>
-  </header>
+  <div class="mx-auto max-w-2xl px-4 py-10">
+    <header class="flex items-start justify-between gap-4">
+      <div>
+        <h1 class="mb-1">MCP Gateway</h1>
+        <p class="my-0 text-meta text-muted">signed in as <span class="text-ink">{{ login }}</span></p>
+      </div>
+      <form method="post" action="/logout">
+        <button class="quiet">Sign out</button>
+      </form>
+    </header>
 
-  <p id="flash" role="alert" hidden class="notice bad"></p>
+    <p id="flash" role="alert" hidden class="notice bad"></p>
 
-  {% if mcps.is_empty() %}
-  <p class="mt-8 text-control text-muted">No MCPs configured. Add entries to the gateway's registry (<code>MCP_REGISTRY</code>).</p>
-  {% endif %}
+    {% if mcps.is_empty() %}
+      <p class="mt-8 text-control text-muted">No MCPs configured. Add entries to the gateway's registry (<code>MCP_REGISTRY</code>).</p>
+    {% endif %}
 
-  {% for m in mcps %}
-  {% include "mcp_section.html" %}
-  {% endfor %}
+    {% for m in mcps %}
+      {% include "mcp_section.html" %}
+    {% endfor %}
 
-  {% include "footer.html" %}
-</div>
+    {% include "footer.html" %}
+  </div>
 {% endblock %}

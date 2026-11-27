@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.20.0
+
+### Changed
+
+- **The dashboard is drawn by koan-kit-web's components, and laid out by page.** Every control, status, flash, disclosure and question is the kit's, and the stylesheet is compiled from the kit's own source, so the gateway no longer needs a GitHub Packages token or a Node build of its own. Disconnecting asks in the kit's dialog rather than the browser's, a change is reported as a flash, and a backend's answer about the credentials or a setting's choices is asked once and remembered for a minute rather than on every page load. The dashboard's internal routes are renamed (`/dashboard/{mcp}/credentials`, `/dashboard/{mcp}/disconnect`, `/dashboard/{mcp}/settings/{field}`) and signing out is a Datastar request; nothing outside the dashboard calls them. ARCHITECTURE.md describes the layout.
+
+### Internal
+
+- **askama-analyzer formats the templates.** `just fmt` runs its formatter, and CI runs `askama-analyzer fmt --check` as an advisory step until a later change formats the templates and makes it blocking. mise installs the latest release with its release-age wait off for this tool alone, since it is maintained alongside these projects and CI should run the release the editor runs.
+
 ## 0.19.0
 
 ### Changed

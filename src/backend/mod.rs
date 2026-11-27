@@ -15,6 +15,10 @@ use crate::config::Mcp;
 use crate::state::AppState;
 use crate::store::CredentialSet;
 
+pub mod choices;
+pub mod sync;
+pub mod verify;
+
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const SESSION_HEADER: &str = "mcp-session-id";
 const VERSION_HEADER: &str = "mcp-protocol-version";

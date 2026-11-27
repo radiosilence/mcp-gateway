@@ -47,34 +47,7 @@ pub struct Store {
 /// What we know about a stored token without decrypting it — enough for the
 /// dashboard to show "a token is set, updated X" without exposing the secret.
 pub struct TokenMeta {
-    pub updated_at: time::OffsetDateTime,
-}
-
-impl TokenMeta {
-    /// For `<time datetime>`.
-    pub fn updated_at_rfc3339(&self) -> String {
-        self.updated_at
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap_or_else(|_| self.updated_at.to_string())
-    }
-
-    /// How long ago, in words: the server does not know the viewer's timezone,
-    /// so a relative time is the one it can render correctly.
-    pub fn updated_ago(&self) -> String {
-        let seconds = (OffsetDateTime::now_utc() - self.updated_at).whole_seconds();
-        let seconds = seconds.max(0);
-        let (n, unit) = match seconds {
-            0..60 => return "just now".into(),
-            60..3_600 => (seconds / 60, "minute"),
-            3_600..86_400 => (seconds / 3_600, "hour"),
-            86_400..2_592_000 => (seconds / 86_400, "day"),
-            _ => (seconds / 2_592_000, "month"),
-        };
-        match n {
-            1 => format!("1 {unit} ago"),
-            n => format!("{n} {unit}s ago"),
-        }
-    }
+    pub updated_at: OffsetDateTime,
 }
 
 /// A user's values for one MCP, keyed by [`crate::config::CredentialField::id`].
@@ -402,22 +375,6 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn elapsed_time_reads_as_words() {
-        let ago = |secs: i64| {
-            TokenMeta {
-                updated_at: OffsetDateTime::now_utc() - time::Duration::seconds(secs),
-            }
-            .updated_ago()
-        };
-
-        assert_eq!(ago(5), "just now");
-        assert_eq!(ago(60), "1 minute ago");
-        assert_eq!(ago(3 * 3_600), "3 hours ago");
-        assert_eq!(ago(2 * 86_400), "2 days ago");
-        assert_eq!(ago(-200), "just now");
-    }
 
     #[test]
     fn credential_sets_round_trip() {

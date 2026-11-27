@@ -5,16 +5,15 @@
 //! encrypted, serves a dashboard to manage them, and proxies to each backend
 //! MCP with the right values injected per request.
 
-mod assets;
 mod auth;
 mod backend;
 mod config;
 mod crypto;
-mod dashboard;
 mod error;
 mod proxy;
 mod state;
 mod store;
+mod web;
 mod well_known;
 
 use std::future::IntoFuture;
@@ -25,11 +24,7 @@ use std::time::Duration;
 use anyhow::Result;
 use askama_datastar::{Csp, SecurityHeaders};
 use axum::Router;
-use axum::routing::{any, get, patch, post};
-use tower_governor::GovernorLayer;
-use tower_governor::governor::GovernorConfigBuilder;
-use tower_governor::key_extractor::SmartIpKeyExtractor;
-use tower_http::compression::CompressionLayer;
+use axum::routing::{any, get};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
@@ -48,7 +43,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// `unsafe-eval` is required by Datastar, which compiles each `data-*`
 /// expression with `Function()`. It means a `data-*` attribute rendered from an
 /// unescaped value would execute, so escaping is the control, which the
-/// escaping guard in `dashboard::view`'s tests checks.
+/// escaping guard in `web::escaping` checks.
 fn csp() -> Csp {
     Csp::new().datastar()
 }
@@ -100,26 +95,8 @@ async fn main() -> Result<()> {
         http,
         proxy_http,
         hydra,
+        questions: Default::default(),
     };
-
-    // Only the login round trip is rate limited, keyed on the client IP from
-    // the ingress's forwarding headers. `/login` writes a row per request.
-    let auth_governor = GovernorConfigBuilder::default()
-        .per_second(2)
-        .burst_size(10)
-        .key_extractor(SmartIpKeyExtractor)
-        .finish()
-        .expect("valid governor config for auth routes");
-
-    // The keyed limiter keeps an entry per IP until told to drop idle ones.
-    let auth_limiter = auth_governor.limiter().clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            auth_limiter.retain_recent();
-        }
-    });
 
     // Every replica sweeping is harmless: both steps are idempotent.
     tokio::spawn(async move {
@@ -136,39 +113,9 @@ async fn main() -> Result<()> {
         }
     });
 
-    let auth_routes = Router::new()
-        .route("/login", get(auth::routes::login))
-        .route("/auth/callback", get(auth::routes::callback))
-        .layer(GovernorLayer::new(auth_governor));
-
-    // Compression covers the dashboard and its assets only. Proxied MCP
-    // responses pass through as the backend encoded them, and the default
-    // predicate leaves `text/event-stream` alone, since an encoder buffers.
-    let dashboard_routes = Router::new()
-        .route("/", get(dashboard::index))
-        .route("/logout", post(auth::routes::logout))
-        .route("/dashboard", get(dashboard::dashboard))
-        .route("/dashboard/{mcp_id}/token", post(dashboard::set_credential))
-        .route("/dashboard/{mcp_id}/status", get(dashboard::mcp_status))
-        .route(
-            "/dashboard/{mcp_id}/options/{field_id}",
-            get(dashboard::field_options),
-        )
-        .route(
-            "/dashboard/{mcp_id}/field/{field_id}",
-            patch(dashboard::set_field),
-        )
-        .route(
-            "/dashboard/{mcp_id}/delete",
-            post(dashboard::delete_credential),
-        )
-        .merge(assets::routes())
-        .layer(CompressionLayer::new());
-
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .merge(dashboard_routes)
-        .merge(assets::font())
+        .merge(web::routes())
         .route(
             "/.well-known/oauth-protected-resource",
             get(well_known::protected_resource),
@@ -178,8 +125,8 @@ async fn main() -> Result<()> {
             get(well_known::protected_resource_for),
         )
         // MCPs live at the root; config rejects ids that shadow routes above.
+        // Proxied responses pass through as the backend encoded them.
         .route("/{id}", any(proxy::handle))
-        .merge(auth_routes)
         // Applied to every response, the proxy's included: `proxy` drops a
         // backend's own security headers so these stand.
         .layer(SecurityHeaders::new(&csp()))
@@ -270,25 +217,5 @@ mod tests {
         assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
         assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
         assert_eq!(headers[header::REFERRER_POLICY], "same-origin");
-    }
-
-    /// With eval allowed, escaping is what keeps backend-supplied strings (option
-    /// labels, error text) from executing. See `csp`.
-    #[test]
-    fn no_template_opts_out_of_escaping() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-        let mut found = Vec::new();
-        for entry in std::fs::read_dir(&dir).expect("templates/") {
-            let path = entry.expect("entry").path();
-            let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            for line in std::fs::read_to_string(&path).expect("readable").lines() {
-                // `safe-area-inset` in a Tailwind class is not the filter.
-                if line.contains("|safe") || line.contains("escape(") {
-                    found.push(format!("{name}: {}", line.trim()));
-                }
-            }
-        }
-        found.sort();
-        assert_eq!(found, Vec::<String>::new());
     }
 }

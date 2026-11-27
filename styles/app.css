@@ -1,0 +1,30 @@
+/*
+ * The dashboard's stylesheet, compiled by Tailwind into assets/app.css (`just css`). The compiled file is committed:
+ * the binary embeds it, and building the gateway must not need the Tailwind CLI.
+ *
+ * The controls come from the kōan web kit: koan-kit-web's components write the markup and its stylesheet, imported
+ * from the crate's source through the `kit` link `just kit` makes, draws it. The pages carry their layout as utilities
+ * in the templates.
+ */
+@import "tailwindcss" source(none);
+@source "../templates";
+@source "../src";
+@import "./kit/theme.css";
+
+/* The accent is cyan, the gateway's own among the apps on this theme: #4fd6f0 on dark, and #066f82, the same hue
+ * darkened, on light. Both are over 4.5:1 on --surface. */
+:root {
+  --brand: #4fd6f0;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --brand: #066f82;
+  }
+}
+
+/* Stored, but the backend could not say whether it works: not `ok`, which would claim it does, and not `wait`, which
+ * reads as still checking once reduced motion stills the ensō. */
+.status.unknown {
+  --tone: var(--ink);
+}

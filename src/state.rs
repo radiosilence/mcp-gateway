@@ -18,4 +18,6 @@ pub struct AppState {
     /// open for as long as the client listens, which a total timeout would cut.
     pub proxy_http: reqwest::Client,
     pub hydra: HydraAdmin,
+    /// What the dashboard asks backends, asked once and remembered a while.
+    pub questions: Arc<crate::web::Questions>,
 }

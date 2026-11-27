@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    {{ kit::Head::new(self.css()).datastar("/assets/datastar.js").noindex() }}
+    {{ title }}
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔌</text></svg>"
+    />
+    <script type="module" src="{{ self.js() }}"></script>
+  </head>
+  <body data-signals="{{ signals }}"{{ self.history() }}>
+    {{ kit::SkipLink::new("Skip to content", "main") }}
+    {{ main }}
+    {#- The bottom padding clears a phone's gesture bar. -#}
+    <footer class="pt-6 pb-[max(1rem,env(safe-area-inset-bottom))] text-center text-fine">{{
+        kit::Release::new(
+            "mcp-gateway",
+            self.version(),
+            "https://github.com/radiosilence/mcp-gateway",
+        )
+    }}</footer>
+    {{ kit::Confirm::new("Cancel") }}
+    {{ kit::Flash::region() }}
+  </body>
+</html>

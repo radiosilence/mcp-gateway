@@ -1,0 +1,16 @@
+<div class="flex min-h-[80dvh] items-center justify-center px-4">
+  <div class="w-full max-w-form">
+    <div class="panel p-8">
+      <h1 class="text-center">MCP Gateway</h1>
+      <p class="text-center text-control text-muted">
+        Connect your self-hosted MCP servers to Claude. Sign in, enter each
+        service's credentials, and add the connector.
+      </p>
+      {#- A link, not a form: the issuer's round trip starts with a GET. -#}
+      {{ kit::Button::primary("Sign in with GitHub").href("/login").class("mt-8 w-full") }}
+    </div>
+    <p class="mt-4 text-center text-fine text-muted">
+      Your credentials are encrypted at rest and only used to talk to each service on your behalf.
+    </p>
+  </div>
+</div>

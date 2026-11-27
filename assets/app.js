@@ -1,1 +1,15 @@
-import{action as e}from"datastar";e({name:`copy`,async apply({el:e},t){e.dataset.label??=e.textContent??``;try{await navigator.clipboard.writeText(t),e.textContent=`Copied`}catch{e.textContent=`Copy failed`}setTimeout(()=>{e.textContent=e.dataset.label??``},1200)}}),document.addEventListener(`datastar-fetch`,e=>{let{type:t,argsRaw:n}=e.detail,r=document.getElementById(`flash`);if(t===`started`)r&&(r.hidden=!0);else if(t===`error`&&n.status===`401`)location.assign(`/login`);else if(r){if(t===`error`)r.textContent=`Something went wrong (${n.status}). Try again.`;else if(t===`retries-failed`)r.textContent=`The gateway could not be reached. Try again.`;else return;r.hidden=!1}});
+// Datastar drops the body of a failed response and retries a network failure
+// quietly, so both are said here, as a flash over the page. A session that has
+// ended goes to the sign-in.
+document.addEventListener("datastar-fetch", (event) => {
+  const { type, argsRaw } = event.detail;
+  const flash = (message) =>
+    window.dispatchEvent(new CustomEvent("kit-flash", { detail: { message, bad: true } }));
+  if (type === "error" && argsRaw.status === "401") {
+    location.assign("/login");
+  } else if (type === "error") {
+    flash(`Something went wrong (${argsRaw.status}). Try again.`);
+  } else if (type === "retries-failed") {
+    flash("The gateway could not be reached. Try again.");
+  }
+});

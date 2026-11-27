@@ -4,3 +4,6 @@
 /cloudflared/
 /node_modules
 /.npmrc.auth
+
+# The link `just kit` makes to koan-kit-web's source.
+/styles/kit

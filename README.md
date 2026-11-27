@@ -99,22 +99,18 @@ You can exercise the whole browser flow (login, set token, test connection) at
 The page loads nothing from the internet: the stylesheet, script and font are
 embedded in the binary. Each is served under an address carrying a hash of its
 contents (askama_datastar's `Asset`), so a browser caches it for good and a
-new release's page fetches the new copy rather than a stale one. They are built from `web/` (TypeScript bundled by
-rolldown, and Tailwind v4 reading class names from the templates) and committed, so a cargo build needs no node toolchain. **After
-changing `web/` or a template, run `mise run web`** and commit the result; CI
-rebuilds them and fails if they differ. `mise run web-check` typechecks, lints,
-format-checks and runs the theme's kit-check.
+new release's page fetches the new copy rather than a stale one.
 
-The look comes from the kōan web kit,
-[`@radiosilence/koan-kit-web`](https://github.com/radiosilence/koan/tree/main/koan-kit-web), which koan,
-slsk-mcp and jaritanet's auth pages share. Plain elements already come out in
-it, and its classes (`panel`, `field`, `status`, `code`, the button weights)
-draw the rest, so `web/app.css` holds only the gateway's cyan accent and a
-tone for a status the backend could not confirm, and the templates add layout. The kit removes Tailwind's palette, radii, shadows
-and type sizes, so a class such as `rounded-lg` or `text-sm` compiles to
-nothing; kit-check reports any that remain in the templates, and fails CI. A deliberate exception carries `kit: raw` and its
-reason. The package is on GitHub Packages, which needs a token to install: run
-`mise run auth` once to write it from your `gh` login.
+The look and the controls come from the kōan web kit,
+[`koan-kit-web`](https://github.com/radiosilence/koan/tree/main/koan-kit-web),
+which koan, slsk-mcp and jaritanet's auth pages share: its components write the
+markup, and its stylesheet, compiled from the crate's own source, draws it, so
+one version in `Cargo.lock` names both. `styles/app.css` holds only the
+gateway's cyan accent and a tone for a status the backend could not confirm.
+**After changing a template or `styles/`, run `just css`** and commit
+`assets/app.css`; CI rebuilds it and fails if it differs, and kit-check fails
+on a class outside the kit. ARCHITECTURE.md describes how the web UI is put
+together.
 
 ### Testing the Claude connector (Cloudflare tunnel)
 

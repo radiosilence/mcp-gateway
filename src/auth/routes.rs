@@ -1,5 +1,5 @@
 //! Browser-facing auth routes:
-//! - `/login`, `/logout`   — the dashboard session
+//! - `/login`             — the dashboard session (sign-out is the dashboard's)
 //! - `/auth/callback`      — the issuer's return leg
 //!
 //! All session and flow state is server-side; cookies carry only opaque ids.
@@ -81,17 +81,18 @@ pub async fn login(State(state): State<AppState>) -> AppResult<Response> {
     ))
 }
 
-pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if let Some(id) = session_id(&headers)
+/// End the dashboard session, returning the cookies that clear it. Only this
+/// gateway's session: the issuer's serves other relying parties.
+pub async fn end_session(state: &AppState, headers: &HeaderMap) -> Vec<String> {
+    if let Some(id) = session_id(headers)
         && let Err(e) = state.store.delete_session(id).await
     {
         tracing::warn!(
             error = format!("{e:#}"),
-            "deleting a session at logout failed"
+            "deleting a session at sign-out failed"
         );
     }
-    // Only this gateway's session; the issuer's serves other relying parties.
-    redirect("/", &clearing(&[cookie::clear_cookie(SESSION_COOKIE)]))
+    clearing(&[cookie::clear_cookie(SESSION_COOKIE)])
 }
 
 #[derive(Deserialize)]

@@ -45,8 +45,8 @@ enum Connection {
     },
     /// Credentials stored.
     Configured {
-        /// When the credentials were last saved.
-        updated: kit::Time<'static>,
+        /// When the credentials were last saved, in Unix milliseconds.
+        updated_ms: i64,
         connector: Html,
         settings: Vec<Html>,
         form: Html,
@@ -224,11 +224,8 @@ impl Panel {
                 settings: settings(),
             },
             (false, Some(meta)) => Connection::Configured {
-                updated: kit::Time::millis(
-                    meta.updated_at.unix_timestamp() * 1000
-                        + i64::from(meta.updated_at.millisecond()),
-                )
-                .relative(),
+                updated_ms: meta.updated_at.unix_timestamp() * 1000
+                    + i64::from(meta.updated_at.millisecond()),
                 connector: connector(),
                 settings: settings(),
                 form: form(),

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.20.1
+
+### Changed
+
+- **koan-kit-web 0.8.1.** A failed request, a lost connection and an ended session are handled by the kit's flash region, so the page loads no script of its own; a setting loads and saves through the kit's `Field::loads` and `Form::live`.
+- **koan-kit-web 0.9.** A configured MCP whose backend cannot confirm it is shown in the kit's neutral tone, the credentials' age is shown in the reader's own time zone and kept current, and a failed request is still reported after an earlier flash, which 0.8 stopped doing.
+- **koan-kit-web 0.10.** The stylesheet is recompiled from the 0.10 kit, and the credentials' age is drawn by the template from the stored time.
+
 ## 0.20.0
 
 ### Changed

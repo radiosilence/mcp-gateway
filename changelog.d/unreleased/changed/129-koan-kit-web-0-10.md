@@ -1,0 +1,1 @@
+- **koan-kit-web 0.10.** The stylesheet is recompiled from the 0.10 kit, and the credentials' age is drawn by the template from the stored time.
